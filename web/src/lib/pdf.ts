@@ -1,10 +1,18 @@
 // Extracts text page by page in the browser, so only text goes to the database.
+import "./stream-polyfill";
 import * as pdfjs from "pdfjs-dist/legacy/build/pdf.mjs";
-import workerUrl from "pdfjs-dist/legacy/build/pdf.worker.min.mjs?url";
 
-pdfjs.GlobalWorkerOptions.workerSrc = workerUrl;
+// Our own worker entry, so the Safari stream patch also runs inside the worker.
+let worker: Worker | null = null;
+function ensureWorker() {
+  if (!worker) {
+    worker = new Worker(new URL("./pdf-worker.ts", import.meta.url), { type: "module" });
+    pdfjs.GlobalWorkerOptions.workerPort = worker;
+  }
+}
 
 export async function pdfToPages(file: File, onProgress?: (done: number, total: number) => void): Promise<string[]> {
+  ensureWorker();
   const data = new Uint8Array(await file.arrayBuffer());
   const doc = await pdfjs.getDocument({ data }).promise;
   const pages: string[] = [];
