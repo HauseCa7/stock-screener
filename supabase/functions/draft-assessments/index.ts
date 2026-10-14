@@ -160,14 +160,39 @@ function prosePages(pages: string[], budget: number): string {
   return pick.sort((a, b) => a.i - b.i).map((p) => `--- page ${p.i + 1} ---\n${p.t}`).join("\n\n");
 }
 
+/**
+ * Puts the answer in the expected shape. Without strict mode, Claude sometimes sends a plain value
+ * (e.g. `false` or an array) instead of {value, rationale, evidence}, or writes "step9.moats" for
+ * "step9__moats". Both are accepted.
+ */
+function normalize(schema: any, input: any): Record<string, any> {
+  const out: Record<string, any> = {};
+  if (!input || typeof input !== "object") return out;
+  const keys = Object.keys(schema.properties);
+  // Unwrap an answer nested one level deep, e.g. {"record_risks": {...}} or {"input": {...}}.
+  const hits = (o: any) => keys.filter((k) => k in o || k.replace("__", ".") in o).length;
+  if (!hits(input)) {
+    const inner = Object.values(input).find((v) => v && typeof v === "object" && !Array.isArray(v) && hits(v));
+    if (inner) input = inner;
+  }
+  for (const key of keys) {
+    const raw = key in input ? input[key] : input[key.replace("__", ".")];
+    if (raw === undefined) continue;
+    const wrapped = raw !== null && typeof raw === "object" && !Array.isArray(raw) && "value" in raw;
+    out[key] = wrapped ? raw : { value: raw, rationale: "", evidence: [] };
+  }
+  return out;
+}
+
 /** Every field the tool asks for must be there, with a value of the right basic type. */
-function checkAnswer(schema: any, input: any): string | null {
-  if (!input || typeof input !== "object") return "The answer was empty.";
+function checkAnswer(schema: any, rawInput: any): string | null {
+  if (!rawInput || typeof rawInput !== "object") return "The answer was empty.";
+  const input = normalize(schema, rawInput);
   const missing: string[] = [];
   const wrong: string[] = [];
   for (const [key, prop] of Object.entries<any>(schema.properties)) {
     const item = input[key];
-    if (!item || typeof item !== "object" || !("value" in item) || item.value === null || item.value === undefined) {
+    if (!item || item.value === null || item.value === undefined) {
       missing.push(key);
       continue;
     }
@@ -183,7 +208,8 @@ function checkAnswer(schema: any, input: any): string | null {
     else if (want?.enum && !want.enum.includes(v)) wrong.push(`${key} (must be one of ${want.enum.join(", ")})`);
   }
   if (!missing.length && !wrong.length) return null;
-  return [missing.length && `missing ${missing.join(", ")}`, wrong.length && `wrong format for ${wrong.join(", ")}`].filter(Boolean).join("; ") + ".";
+  const got = Object.keys(rawInput).slice(0, 12).join(", ") || "nothing";
+  return [missing.length && `missing ${missing.join(", ")}`, wrong.length && `wrong format for ${wrong.join(", ")}`].filter(Boolean).join("; ") + ` (received: ${got}).`;
 }
 
 Deno.serve(handler(async (req) => {
@@ -248,7 +274,8 @@ Deno.serve(handler(async (req) => {
     if (out.toolName !== toolName) throw new Error(`Claude answered with ${out.toolName} instead of ${toolName}.`);
 
     const now = new Date().toISOString();
-    const rows = Object.entries(out.input as Record<string, any>).map(([k, v]) => ({
+    const answer = normalize(TOOLS.find((t) => t.name === toolName)!.input_schema, out.input);
+    const rows = Object.entries(answer).map(([k, v]) => ({
       company_id,
       key: k.replace("__", "."),
       ai_value: v?.value ?? null,
