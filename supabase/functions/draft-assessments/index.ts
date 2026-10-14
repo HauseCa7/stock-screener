@@ -9,7 +9,7 @@ import {
 const ev = {
   type: "array",
   maxItems: 3,
-  description: "Short verbatim quotes (max 30 words each) from the provided documents that support this.",
+  description: "Up to 3 short verbatim quotes (max 30 words each) from the provided documents that support this. Use page 0 if unknown.",
   items: {
     type: "object",
     properties: {
@@ -109,7 +109,7 @@ const TOOLS = [
     score__talent: item(score, "Scorecard talent: 0 low, 5 medium, 10 high."),
   }),
   tool("record_risks", "Step 11 'Destroy something beautiful' and the legal/regulatory overhang check.", {
-    step11__reasons_wrong: item({ type: "array", items: str, minItems: 3, maxItems: 5 }, "3 to 5 reasons the bullish thesis is wrong."),
+    step11__reasons_wrong: item({ type: "array", items: str }, "3 to 5 reasons the bullish thesis is wrong."),
     step11__bear_case: item(str, "A short bear case in plain words (3-6 sentences)."),
     step11__red_flags: item(
       obj({ fraud_or_accounting: tri, auditor_change: tri, insider_selling: tri, over_expansion: tri }),
@@ -199,7 +199,8 @@ Deno.serve(handler(async (req) => {
       model,
       system: SYSTEM,
       tools: TOOLS,
-      maxTokens: 6000,
+      toolName,
+      maxTokens: 12000,
       content: [
         // Identical across groups → cached after the first call (5 min).
         {
@@ -209,7 +210,7 @@ Deno.serve(handler(async (req) => {
         },
         {
           type: "text",
-          text: `Computed metrics from the financial statements (trust these over prose):\n${metrics_summary || "(not available)"}\n\nNow call ${toolName}. Fill every field.`,
+          text: `Computed metrics from the financial statements (trust these over prose):\n${metrics_summary || "(not available)"}\n\nNow call the ${toolName} tool. Fill every field.`,
         },
       ],
     });

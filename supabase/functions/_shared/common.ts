@@ -94,9 +94,32 @@ export function costOf(model: string, u: Usage): number {
 export interface ClaudeCall {
   model: string;
   system: string;
-  tools: unknown[];
+  tools: { name: string; description: string; input_schema: any }[];
+  toolName: string; // the tool Claude is asked to call
   content: unknown[]; // content blocks for the single user message
   maxTokens: number;
+}
+
+/**
+ * Makes a JSON schema valid for strict tool use: every object closed and fully required,
+ * no array-size limits beyond minItems 0/1. Descriptions keep the human guidance.
+ */
+export function strictify(schema: any): any {
+  if (Array.isArray(schema)) return schema.map(strictify);
+  if (!schema || typeof schema !== "object") return schema;
+  const out: any = {};
+  for (const [k, v] of Object.entries(schema)) {
+    if (k === "maxItems") continue;
+    if (k === "minItems" && typeof v === "number" && v > 1) { out.minItems = 1; continue; }
+    out[k] = k === "properties"
+      ? Object.fromEntries(Object.entries(v as any).map(([pk, pv]) => [pk, strictify(pv)]))
+      : strictify(v);
+  }
+  if (out.type === "object" && out.properties) {
+    out.additionalProperties = false;
+    out.required = Object.keys(out.properties);
+  }
+  return out;
 }
 
 export async function callClaude(c: ClaudeCall): Promise<{ toolName: string; input: any; usage: Usage }> {
@@ -115,32 +138,47 @@ export async function callClaude(c: ClaudeCall): Promise<{ toolName: string; inp
   // Organization-level keys (not scoped to a workspace) must name the workspace on every request.
   const workspace = Deno.env.get("ANTHROPIC_WORKSPACE_ID");
   if (workspace) headers["anthropic-workspace-id"] = workspace.trim();
-  const res = await fetch("https://api.anthropic.com/v1/messages", {
-    method: "POST",
-    headers,
-    body: JSON.stringify({
-      model: c.model,
-      max_tokens: c.maxTokens,
-      system: c.system,
-      tools: c.tools,
-      tool_choice: { type: "any" },
-      messages: [{ role: "user", content: c.content }],
-    }),
-  });
-  const body = await res.json().catch(() => ({}));
-  if (!res.ok) {
-    let msg = body?.error?.message ?? `HTTP ${res.status}`;
-    if (/workspace/i.test(msg) && !workspace) {
-      msg += " Fix: add a Supabase secret ANTHROPIC_WORKSPACE_ID, or use an API key created inside a workspace.";
+  // Newer models reject forced tool choice, so tools are offered with tool_choice "auto",
+  // marked strict (output must match the schema), and Claude is told which one to call.
+  const tools = c.tools.map((t) => ({ ...t, strict: true, input_schema: strictify(t.input_schema) }));
+  const usage: Usage = { input_tokens: 0, output_tokens: 0, cache_read_input_tokens: 0, cache_creation_input_tokens: 0 };
+  let content = c.content;
+  for (let attempt = 0; attempt < 2; attempt++) {
+    const res = await fetch("https://api.anthropic.com/v1/messages", {
+      method: "POST",
+      headers,
+      body: JSON.stringify({
+        model: c.model,
+        max_tokens: c.maxTokens,
+        system: c.system,
+        tools,
+        tool_choice: { type: "auto" },
+        messages: [{ role: "user", content }],
+      }),
+    });
+    const body = await res.json().catch(() => ({}));
+    if (!res.ok) {
+      let msg = body?.error?.message ?? `HTTP ${res.status}`;
+      if (/workspace/i.test(msg) && !workspace) {
+        msg += " Fix: add a Supabase secret ANTHROPIC_WORKSPACE_ID, or use an API key created inside a workspace.";
+      }
+      throw new HttpError(502, `Claude API error: ${msg}`);
     }
-    throw new HttpError(502, `Claude API error: ${msg}`);
+    const u = body.usage ?? {};
+    usage.input_tokens += u.input_tokens ?? 0;
+    usage.output_tokens += u.output_tokens ?? 0;
+    usage.cache_read_input_tokens! += u.cache_read_input_tokens ?? 0;
+    usage.cache_creation_input_tokens! += u.cache_creation_input_tokens ?? 0;
+    if (body.stop_reason === "max_tokens") {
+      throw new HttpError(502, "Claude's answer was cut off (too long). Try again or use fewer documents.");
+    }
+    if (body.stop_reason === "refusal") throw new HttpError(502, "Claude declined to answer this request.");
+    const block = (body.content ?? []).find((b: any) => b.type === "tool_use" && b.name === c.toolName);
+    if (block) return { toolName: block.name, input: block.input, usage };
+    // Answered in prose instead: ask once more, explicitly.
+    content = [...c.content, { type: "text", text: `Respond only by calling the ${c.toolName} tool.` }];
   }
-  const block = (body.content ?? []).find((b: any) => b.type === "tool_use");
-  if (!block) throw new HttpError(502, "Claude did not return structured output.");
-  if (body.stop_reason === "max_tokens") {
-    throw new HttpError(502, "Claude's answer was cut off (too long). Try again or use fewer documents.");
-  }
-  return { toolName: block.name, input: block.input, usage: body.usage };
+  throw new HttpError(502, `Claude didn't return the ${c.toolName} result. Try again.`);
 }
 
 export async function logRun(
