@@ -217,8 +217,22 @@ export async function saveMarketField(companyId: string, field: string, value: n
   );
 }
 
+/** Saves several market numbers at once; each is marked as entered by you, so refreshes won't overwrite it. */
+export async function saveMarketFields(companyId: string, values: Record<string, number | null>, current: Market | null) {
+  const origin = { ...(current?.field_origin ?? {}) };
+  for (const [k, v] of Object.entries(values)) {
+    if (v === null) delete origin[k];
+    else origin[k] = "user";
+  }
+  must(
+    await supabase
+      .from("market_data")
+      .upsert({ company_id: companyId, ...values, field_origin: origin }, { onConflict: "company_id" }),
+  );
+}
+
 export async function refreshMarket(companyId: string) {
-  return invoke<{ ok: boolean; updated: string[]; sources?: string[]; warnings: string[] }>("market-data", { company_id: companyId });
+  return invoke<{ ok: boolean; updated: string[]; sources?: string[]; missing?: string[]; warnings: string[] }>("market-data", { company_id: companyId });
 }
 
 // ---------------------------------------------------------------- assessments

@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { useNavigate, useParams } from "react-router-dom";
+import { Link, useNavigate, useParams } from "react-router-dom";
 import { MarketPanel, Reports } from "../components/Reports";
 import { Financials } from "../components/Financials";
 import { ScoreTable } from "../components/Scorecard";
@@ -11,6 +11,7 @@ import { analyze, metricsSummary } from "../engine/steps";
 import { deleteCompany, draftGroup, getPrefs, GROUPS, loadCompany, refreshMarket, saveSnapshot, type Bundle, type Group, type Prefs } from "../lib/api";
 import { VERDICT_LABEL } from "../lib/analyze";
 import { GROUP_LABEL } from "../lib/fields";
+import { missingFields } from "../lib/marketFields";
 
 type Tab = "steps" | "scorecard" | "financials" | "valuation" | "data";
 const TABS: [Tab, string][] = [
@@ -61,6 +62,7 @@ export default function CompanyPage() {
   if (!b || !m || !an) return <p className="muted">Loading…</p>;
   const c = b.company;
   const step = an.steps[sel - 1];
+  const missingMarket = missingFields(b.market, m.shares);
 
   async function draftOne(group: string) {
     setDrafting(group);
@@ -80,12 +82,8 @@ export default function CompanyPage() {
     setDrafting("all");
     try {
       setProgress("Fetching market data…");
-      try {
-        const r = await refreshMarket(c.id);
-        if (r.warnings.length) problems.push(...r.warnings);
-      } catch (e: any) {
-        problems.push(`Market data: ${e.message}`);
-      }
+      // Anything that can't be fetched shows up in the "missing numbers" banner instead of as an error.
+      await refreshMarket(c.id).catch(() => null);
       const fresh = await loadCompany(c.id);
       const summary = metricsSummary(computeMetrics(fresh.financials, fresh.market), fresh.market, c.currency ?? "USD");
       // The first call caches the documents for five minutes; the rest reuse that cache at a fraction of the cost.
@@ -141,6 +139,14 @@ export default function CompanyPage() {
       </div>
 
       {progress && <div className="notice draft" style={{ marginBottom: 12 }}>{progress}</div>}
+      {!progress && missingMarket.length > 0 && (
+        <div className="notice row" style={{ marginBottom: 12 }}>
+          <span style={{ flex: 1 }}>
+            {missingMarket.length} number{missingMarket.length > 1 ? "s" : ""} from Yahoo Finance {missingMarket.length > 1 ? "are" : "is"} needed to finish the analysis: {missingMarket.map((f) => f.label.toLowerCase()).join(", ")}.
+          </span>
+          <Link className="btn sm primary" to={`/c/${c.id}/inputs`}>Fill them in</Link>
+        </div>
+      )}
       {err && <div className="notice error" style={{ marginBottom: 12 }}>{err}</div>}
       {noDocs && tab !== "data" && (
         <div className="notice" style={{ marginBottom: 12 }}>

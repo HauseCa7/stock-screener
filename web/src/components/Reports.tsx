@@ -1,4 +1,5 @@
 import { useState } from "react";
+import { Link } from "react-router-dom";
 import type { Market } from "../engine/types";
 import { money, num, pct } from "../engine/format";
 import { deleteDocument, extractDocument, openPdf, refreshMarket, saveMarketField, updateCompany, updateDocument, uploadDocument, type Company, type Doc } from "../lib/api";
@@ -213,7 +214,7 @@ const MARKET_FIELDS: { k: keyof Market & string; label: string; fmt: (v: number 
 
 export function MarketPanel({ company, market, onChanged }: { company: Company; market: Market | null; onChanged: () => void }) {
   const [busy, setBusy] = useState(false);
-  const [msg, setMsg] = useState<{ error?: boolean; text: string } | null>(null);
+  const [msg, setMsg] = useState<{ error?: boolean; text: string; details?: string[] } | null>(null);
   const [editing, setEditing] = useState<string | null>(null);
   const [draft, setDraft] = useState("");
   const [symbol, setSymbol] = useState(company.data_symbol ?? "");
@@ -224,9 +225,9 @@ export function MarketPanel({ company, market, onChanged }: { company: Company; 
     try {
       const r = await refreshMarket(company.id);
       const from = r.sources?.length ? ` from ${r.sources.join(" and ")}` : "";
-      setMsg({ text: [`Updated ${r.updated.length} fields${from}.`, ...r.warnings].join(" "), error: r.updated.length === 0 && r.warnings.length > 0 });
+      setMsg({ text: r.updated.length ? `Updated ${r.updated.length} numbers${from}.` : "No numbers could be fetched automatically right now.", details: r.warnings });
     } catch (e: any) {
-      setMsg({ error: true, text: e.message });
+      setMsg({ text: "Market data couldn't be fetched automatically right now.", details: [e.message] });
     }
     setBusy(false);
     onChanged();
@@ -250,6 +251,7 @@ export function MarketPanel({ company, market, onChanged }: { company: Company; 
           <input type="text" value={symbol} placeholder={company.ticker} style={{ width: 110 }} onChange={(e) => setSymbol(e.target.value)}
             onBlur={async () => { if ((company.data_symbol ?? "") !== symbol) { await updateCompany(company.id, { data_symbol: symbol.trim().toUpperCase() || null }); onChanged(); } }} />
         </label>
+        <Link className="btn" to={`/c/${company.id}/inputs`}>Enter by hand</Link>
         <button className="btn" onClick={refresh} disabled={busy}>{busy ? "Fetching…" : "Refresh market data"}</button>
       </div>
       <p className="muted small" style={{ margin: 0 }}>
@@ -259,7 +261,18 @@ export function MarketPanel({ company, market, onChanged }: { company: Company; 
         {" · "}
         <a href={`https://finance.yahoo.com/quote/${company.ticker}/holders`} target="_blank" rel="noreferrer">Yahoo holders</a>
       </p>
-      {msg && <div className={`notice ${msg.error ? "error" : ""}`}>{msg.text}</div>}
+      {msg && (
+        <div className="notice">
+          {msg.text}{" "}
+          <Link to={`/c/${company.id}/inputs`}>Fill in or correct numbers by hand</Link>
+          {!!msg.details?.length && (
+            <details className="small muted" style={{ marginTop: 4 }}>
+              <summary>Details</summary>
+              {msg.details.map((d, i) => <div key={i}>{d}</div>)}
+            </details>
+          )}
+        </div>
+      )}
       <div className="grid-2">
         {MARKET_FIELDS.map((f) => {
           const v = (market as any)?.[f.k] as number | null | undefined;

@@ -5,6 +5,7 @@ import { supabase } from "./lib/supabase";
 import CompanyPage from "./pages/Company";
 import Companies from "./pages/Companies";
 import Login from "./pages/Login";
+import MarketInputs from "./pages/MarketInputs";
 import Settings from "./pages/Settings";
 import Usage from "./pages/Usage";
 
@@ -39,6 +40,7 @@ export default function App() {
         <Routes>
           <Route path="/" element={<Companies />} />
           <Route path="/c/:id" element={<CompanyPage />} />
+          <Route path="/c/:id/inputs" element={<MarketInputs />} />
           <Route path="/usage" element={<Usage />} />
           <Route path="/settings" element={<Settings />} />
         </Routes>
