@@ -43,11 +43,35 @@ export class Series {
     return (this.flows.get(metric) ?? []).filter((r) => r.period_start);
   }
 
+  /**
+   * The fiscal year's start (month-day), taken as the most common start of year-long periods
+   * across all metrics. Trailing-twelve-month columns start in other months and are ignored.
+   */
+  private fyStart(): string | null {
+    if (this._fyStart !== undefined) return this._fyStart;
+    const counts = new Map<string, number>();
+    for (const rows of this.flows.values()) {
+      for (const r of rows) {
+        if (r.period_start && isAnnual(durationDays(r.period_start, r.period_end))) {
+          const md = r.period_start.slice(5);
+          counts.set(md, (counts.get(md) ?? 0) + 1);
+        }
+      }
+    }
+    let best: string | null = null, n = 0;
+    for (const [md, c] of counts) if (c > n) { best = md; n = c; }
+    return (this._fyStart = best);
+  }
+  private _fyStart: string | null | undefined = undefined;
+
   /** Fiscal-year values, oldest first, one per year-end. */
   annual(metric: string): Period[] {
     const byEnd = new Map<string, Period>();
+    const fy = this.fyStart();
     for (const r of this.flowRows(metric)) {
       if (!isAnnual(durationDays(r.period_start!, r.period_end))) continue;
+      // 52/53-week years drift a few days, so allow a week either side of the usual start.
+      if (fy && Math.abs(toMs(`2000-${r.period_start!.slice(5)}`) - toMs(`2000-${fy}`)) > 7 * DAY) continue;
       const prev = byEnd.get(r.period_end);
       if (!prev || r.origin === "user") byEnd.set(r.period_end, { start: r.period_start!, end: r.period_end, value: r.value! });
     }

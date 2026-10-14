@@ -60,6 +60,14 @@ describe("Series", () => {
     expect(ltm.value).toBeCloseTo(244.140625e9 + 230e9 - 180e9);
   });
 
+  it("ignores trailing-twelve-month columns when listing fiscal years", () => {
+    const rows = fixture();
+    // A 10-Q's "twelve months ended September 30" cash-flow column.
+    rows.push(flow("revenue", "2025-10-01", "2026-09-30", 999e9));
+    const s = new Series(rows);
+    expect(s.annual("revenue").map((p) => p.end)).toEqual(["2021-12-31", "2022-12-31", "2023-12-31", "2024-12-31", "2025-12-31"]);
+  });
+
   it("prefers user-entered values", () => {
     const s = new Series([
       { ...point("total_debt", "2026-09-30", 5), origin: "ai" },

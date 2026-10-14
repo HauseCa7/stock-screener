@@ -83,15 +83,16 @@ export function Reports({ company, docs, model, onChanged }: { company: Company;
 
   const unread = docs.filter((d) => (d.kind === "annual" || d.kind === "quarterly") && (d.extract_status === "pending" || d.extract_status === "error"));
   const [bulk, setBulk] = useState<string | null>(null);
-  async function readAll() {
+  const readable = docs.filter((d) => d.kind === "annual" || d.kind === "quarterly");
+  async function readAll(list: Doc[]) {
     setErr(null);
     const errors: string[] = [];
-    for (let i = 0; i < unread.length; i++) {
-      setBulk(`Reading ${i + 1} of ${unread.length}: ${unread[i].filename}…`);
+    for (let i = 0; i < list.length; i++) {
+      setBulk(`Reading ${i + 1} of ${list.length}: ${list[i].filename}…`);
       try {
-        await extractDocument(unread[i].id, model);
+        await extractDocument(list[i].id, model);
       } catch (e: any) {
-        errors.push(`${unread[i].filename}: ${e.message}`);
+        errors.push(`${list[i].filename}: ${e.message}`);
         if (/API key|workspace|credit|authentication/i.test(e.message)) break; // same error for every file
       }
       onChanged();
@@ -144,10 +145,15 @@ export function Reports({ company, docs, model, onChanged }: { company: Company;
 
       {err && <div className="notice error">{err}</div>}
 
-      {unread.length > 0 && (
+      {unread.length > 0 ? (
         <div className="row notice">
           <span style={{ flex: 1 }}>{bulk ?? `${unread.length} report${unread.length > 1 ? "s haven't" : " hasn't"} been read yet.`}</span>
-          <button className="btn primary sm" disabled={!!bulk || running} onClick={readAll}>Read numbers from all of them</button>
+          <button className="btn primary sm" disabled={!!bulk || running} onClick={() => readAll(unread)}>Read numbers from all of them</button>
+        </div>
+      ) : readable.length > 0 && (
+        <div className="row">
+          <span className="muted small" style={{ flex: 1 }}>{bulk ?? "Numbers you typed in yourself are kept when reports are read again."}</span>
+          <button className="btn sm" disabled={!!bulk || running} onClick={() => readAll(readable)}>Read all {readable.length} reports again</button>
         </div>
       )}
 
