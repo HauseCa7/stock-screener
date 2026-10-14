@@ -23,7 +23,7 @@ Server functions:
 
 Each function imports `./common.ts`. When deploying, copy `supabase/functions/_shared/common.ts` next to each `index.ts`.
 
-Secrets, set in Supabase → Edge Functions → Secrets (never in this repo): `ANTHROPIC_API_KEY`, `ALPHAVANTAGE_API_KEY`.
+Secrets, set in Supabase → Edge Functions → Secrets (never in this repo): `ANTHROPIC_API_KEY`, `ALPHAVANTAGE_API_KEY`, and `ANTHROPIC_WORKSPACE_ID` only when the Anthropic key is an organization-level key not scoped to a workspace.
 
 Security: only the email in `public.app_owners` can read or write anything. This is enforced by row-level security on every table and the storage bucket, and checked again in every server function. The Supabase URL and publishable key in `web/src/lib/supabase.ts` are public by design.
 
