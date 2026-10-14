@@ -160,6 +160,32 @@ function prosePages(pages: string[], budget: number): string {
   return pick.sort((a, b) => a.i - b.i).map((p) => `--- page ${p.i + 1} ---\n${p.t}`).join("\n\n");
 }
 
+/** Every field the tool asks for must be there, with a value of the right basic type. */
+function checkAnswer(schema: any, input: any): string | null {
+  if (!input || typeof input !== "object") return "The answer was empty.";
+  const missing: string[] = [];
+  const wrong: string[] = [];
+  for (const [key, prop] of Object.entries<any>(schema.properties)) {
+    const item = input[key];
+    if (!item || typeof item !== "object" || !("value" in item) || item.value === null || item.value === undefined) {
+      missing.push(key);
+      continue;
+    }
+    const want = prop.properties?.value;
+    const v = item.value;
+    const ok =
+      !want?.type ? true
+      : want.type === "array" ? Array.isArray(v)
+      : want.type === "object" ? typeof v === "object" && !Array.isArray(v) && Object.keys(want.properties ?? {}).every((k) => k in v)
+      : want.type === "integer" ? Number.isInteger(v)
+      : typeof v === want.type;
+    if (!ok) wrong.push(key);
+    else if (want?.enum && !want.enum.includes(v)) wrong.push(`${key} (must be one of ${want.enum.join(", ")})`);
+  }
+  if (!missing.length && !wrong.length) return null;
+  return [missing.length && `missing ${missing.join(", ")}`, wrong.length && `wrong format for ${wrong.join(", ")}`].filter(Boolean).join("; ") + ".";
+}
+
 Deno.serve(handler(async (req) => {
   const ctx = await authenticate(req);
   const { company_id, group, metrics_summary, model: m } = await req.json();
@@ -201,6 +227,10 @@ Deno.serve(handler(async (req) => {
       tools: TOOLS,
       toolName,
       maxTokens: 12000,
+      // Five strict tools exceed the API's grammar-size cap, and sending only one would break the
+      // shared document cache. So the tools stay non-strict and every answer is checked here.
+      strict: false,
+      validate: (input) => checkAnswer(TOOLS.find((t) => t.name === toolName)!.input_schema, input),
       content: [
         // Identical across groups → cached after the first call (5 min).
         {

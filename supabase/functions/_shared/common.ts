@@ -98,6 +98,10 @@ export interface ClaudeCall {
   toolName: string; // the tool Claude is asked to call
   content: unknown[]; // content blocks for the single user message
   maxTokens: number;
+  /** Strict tools guarantee the schema, but the API caps their combined size. Default true. */
+  strict?: boolean;
+  /** For non-strict tools: return a description of what's wrong with the answer, or null if it's fine. */
+  validate?: (input: any) => string | null;
 }
 
 /**
@@ -140,9 +144,11 @@ export async function callClaude(c: ClaudeCall): Promise<{ toolName: string; inp
   if (workspace) headers["anthropic-workspace-id"] = workspace.trim();
   // Newer models reject forced tool choice, so tools are offered with tool_choice "auto",
   // marked strict (output must match the schema), and Claude is told which one to call.
-  const tools = c.tools.map((t) => ({ ...t, strict: true, input_schema: strictify(t.input_schema) }));
+  const strict = c.strict ?? true;
+  const tools = c.tools.map((t) => (strict ? { ...t, strict: true, input_schema: strictify(t.input_schema) } : t));
   const usage: Usage = { input_tokens: 0, output_tokens: 0, cache_read_input_tokens: 0, cache_creation_input_tokens: 0 };
   let content = c.content;
+  let lastProblem: string | null = null;
   for (let attempt = 0; attempt < 2; attempt++) {
     const res = await fetch("https://api.anthropic.com/v1/messages", {
       method: "POST",
@@ -174,11 +180,13 @@ export async function callClaude(c: ClaudeCall): Promise<{ toolName: string; inp
     }
     if (body.stop_reason === "refusal") throw new HttpError(502, "Claude declined to answer this request.");
     const block = (body.content ?? []).find((b: any) => b.type === "tool_use" && b.name === c.toolName);
-    if (block) return { toolName: block.name, input: block.input, usage };
-    // Answered in prose instead: ask once more, explicitly.
-    content = [...c.content, { type: "text", text: `Respond only by calling the ${c.toolName} tool.` }];
+    const problem = block ? c.validate?.(block.input) ?? null : `Respond only by calling the ${c.toolName} tool.`;
+    if (block && !problem) return { toolName: block.name, input: block.input, usage };
+    lastProblem = problem;
+    // Ask once more, saying exactly what was wrong.
+    content = [...c.content, { type: "text", text: block ? `Your previous ${c.toolName} call was incomplete: ${problem} Call ${c.toolName} again with every field filled.` : problem! }];
   }
-  throw new HttpError(502, `Claude didn't return the ${c.toolName} result. Try again.`);
+  throw new HttpError(502, `Claude's ${c.toolName} answer wasn't complete (${lastProblem}). Try again.`);
 }
 
 export async function logRun(
