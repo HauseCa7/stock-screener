@@ -52,8 +52,8 @@ export default function Companies() {
         <span className="spacer" />
         <form className="row" onSubmit={add}>
           <label className="field">Ticker<input type="text" value={ticker} onChange={(e) => setTicker(e.target.value)} placeholder="NVDA" style={{ width: 110 }} /></label>
-          <label className="field" title="Only needed for non-US listings, e.g. SHOP.TRT for Shopify on the TSX">
-            Market-data symbol (optional)<input type="text" value={symbol} onChange={(e) => setSymbol(e.target.value)} placeholder="SHOP.TRT" style={{ width: 150 }} />
+          <label className="field" title="Only needed for non-US listings, e.g. SHOP.TO for Shopify on the TSX">
+            Market-data symbol (optional)<input type="text" value={symbol} onChange={(e) => setSymbol(e.target.value)} placeholder="SHOP.TO" style={{ width: 150 }} />
           </label>
           <button className="btn primary" disabled={busy || !ticker.trim()} style={{ alignSelf: "end" }}>Add company</button>
         </form>

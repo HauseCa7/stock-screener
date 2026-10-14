@@ -218,7 +218,7 @@ export async function saveMarketField(companyId: string, field: string, value: n
 }
 
 export async function refreshMarket(companyId: string) {
-  return invoke<{ ok: boolean; updated: string[]; warnings: string[] }>("market-data", { company_id: companyId });
+  return invoke<{ ok: boolean; updated: string[]; sources?: string[]; warnings: string[] }>("market-data", { company_id: companyId });
 }
 
 // ---------------------------------------------------------------- assessments

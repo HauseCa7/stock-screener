@@ -19,7 +19,7 @@ Server functions:
 
 - `extract-financials`: picks the statement pages and cover page of one report and asks Claude for the line items.
 - `draft-assessments`: sends the prose sections of the latest reports to Claude, once per section group (trend, business, moat, management, risks). The documents are prompt-cached, so the four calls after the first cost much less.
-- `market-data`: Alpha Vantage for price, market cap, P/E, PEG, 5-year return vs. SPY, and EPS misses.
+- `market-data`: Yahoo Finance (unofficial endpoints) for price, market cap, forward P/E, PEG, short interest, institutional ownership, 5-year return vs. SPY and EPS surprises; Alpha Vantage fills gaps if Yahoo fails. Toronto symbols: SHOP.TO (Yahoo) and SHOP.TRT (Alpha Vantage) are mapped automatically.
 
 Each function imports `./common.ts`. When deploying, copy `supabase/functions/_shared/common.ts` next to each `index.ts`.
 

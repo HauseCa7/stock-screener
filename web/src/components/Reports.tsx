@@ -204,8 +204,8 @@ const MARKET_FIELDS: { k: keyof Market & string; label: string; fmt: (v: number 
   { k: "shares_outstanding", label: "Shares outstanding", fmt: (v) => num(v, 0) },
   { k: "forward_pe", label: "Forward P/E", fmt: (v) => num(v, 1) },
   { k: "peg", label: "PEG", fmt: (v) => num(v, 2) },
-  { k: "short_interest_pct", label: "Short interest (% of float)", fmt: (v) => pct(v), help: "Seeking Alpha or your broker" },
-  { k: "institutional_pct", label: "Institutional ownership (%)", fmt: (v) => pct(v), help: "Yahoo Finance › Holders" },
+  { k: "short_interest_pct", label: "Short interest (% of float)", fmt: (v) => pct(v) },
+  { k: "institutional_pct", label: "Institutional ownership (%)", fmt: (v) => pct(v) },
   { k: "return_5y_pct", label: "5-year total return (%)", fmt: (v) => pct(v, 0) },
   { k: "spx_return_5y_pct", label: "S&P 500 5-year return (%)", fmt: (v) => pct(v, 0) },
   { k: "earnings_misses_last4", label: "EPS misses, last 4 quarters", fmt: (v) => num(v, 0) },
@@ -223,7 +223,8 @@ export function MarketPanel({ company, market, onChanged }: { company: Company; 
     setMsg(null);
     try {
       const r = await refreshMarket(company.id);
-      setMsg({ text: r.warnings.length ? `Updated ${r.updated.length} fields. ${r.warnings.join(" ")}` : `Updated ${r.updated.length} fields.`, error: r.updated.length === 0 && r.warnings.length > 0 });
+      const from = r.sources?.length ? ` from ${r.sources.join(" and ")}` : "";
+      setMsg({ text: [`Updated ${r.updated.length} fields${from}.`, ...r.warnings].join(" "), error: r.updated.length === 0 && r.warnings.length > 0 });
     } catch (e: any) {
       setMsg({ error: true, text: e.message });
     }
@@ -249,10 +250,10 @@ export function MarketPanel({ company, market, onChanged }: { company: Company; 
           <input type="text" value={symbol} placeholder={company.ticker} style={{ width: 110 }} onChange={(e) => setSymbol(e.target.value)}
             onBlur={async () => { if ((company.data_symbol ?? "") !== symbol) { await updateCompany(company.id, { data_symbol: symbol.trim().toUpperCase() || null }); onChanged(); } }} />
         </label>
-        <button className="btn" onClick={refresh} disabled={busy}>{busy ? "Fetching…" : "Refresh from Alpha Vantage"}</button>
+        <button className="btn" onClick={refresh} disabled={busy}>{busy ? "Fetching…" : "Refresh market data"}</button>
       </div>
       <p className="muted small" style={{ margin: 0 }}>
-        The free Alpha Vantage key allows about 25 requests a day, roughly 5 companies. Numbers you type are kept on refresh.
+        From Yahoo Finance, with Alpha Vantage as a backup. Numbers you type are kept on refresh. For Toronto listings set the symbol to e.g. SHOP.TO.
         {market?.fetched_at && ` Last fetched ${new Date(market.fetched_at).toLocaleString()}.`}{" "}
         <a href={`https://seekingalpha.com/symbol/${company.ticker}`} target="_blank" rel="noreferrer">Seeking Alpha</a>
         {" · "}
