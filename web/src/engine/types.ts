@@ -63,7 +63,8 @@ export function sourceOf(a: AssessmentMap, key: string): "user" | "ai" | null {
   return null;
 }
 
-export type Status = "pass" | "fail" | "unknown";
+/** "flag": Claude's judgment says this fails; it only eliminates once you agree. */
+export type Status = "pass" | "fail" | "flag" | "unknown";
 
 export interface Check {
   label: string;
@@ -77,11 +78,17 @@ export interface Check {
   info?: boolean;
 }
 
+/**
+ * review: only Claude's judgment fails it, waiting for your call.
+ * expensive: step 12 only: a quality business priced above the bear case (DCA instead of waiting).
+ */
+export type StepStatus = "pass" | "fail" | "review" | "expensive" | "incomplete";
+
 export interface StepResult {
   n: number;
   title: string;
-  status: "pass" | "fail" | "incomplete";
+  status: StepStatus;
   checks: Check[];
   overridden?: { status: "pass" | "fail"; reason: string } | null;
-  computedStatus: "pass" | "fail" | "incomplete";
+  computedStatus: StepStatus;
 }

@@ -6,12 +6,31 @@ import type { AssessmentMap, Check, StepResult } from "../engine/types";
 import { clearUserValue, setUserValue } from "../lib/api";
 import { GROUP_LABEL, STEP_BLURB, STEP_FIELDS, STEP_GROUP, STEP_SCORES } from "../lib/fields";
 import { AssessmentItem, SourceTag } from "./Assessment";
+import { DcaPanel } from "./DcaPanel";
+import type { StepStatus } from "../engine/types";
+
+const STATUS_LABEL: Record<StepStatus, string> = {
+  pass: "Passed",
+  fail: "Off the island",
+  review: "Needs your call",
+  expensive: "Priced high · DCA in",
+  incomplete: "Not decided yet",
+};
+const STATUS_CLASS: Record<StepStatus, string> = {
+  pass: "survivor",
+  fail: "off_island",
+  review: "review",
+  expensive: "expensive",
+  incomplete: "incomplete",
+};
 import { ScoreTable } from "./Scorecard";
 
 function CheckRow({ c }: { c: Check }) {
   return (
     <li className={c.info ? "info" : ""}>
-      <span className={`mark ${c.status}`}>{c.status === "pass" ? "✓" : c.status === "fail" ? "✕" : "?"}</span>
+      <span className={`mark ${c.status}`} title={c.status === "flag" ? "Claude's judgment says no. It only counts once you agree." : undefined}>
+        {c.status === "pass" ? "✓" : c.status === "fail" ? "✕" : c.status === "flag" ? "!" : "?"}
+      </span>
       <div>
         <div>{c.label} {c.info && <span className="tag">For reference</span>}</div>
         {c.detail && <div className="muted small">{c.detail}</div>}
@@ -42,9 +61,39 @@ function Confirm({ companyId, k, a, label, onSaved }: { companyId: string; k: st
   );
 }
 
+/** For a step only Claude's judgment fails: agree (it's out) or keep it in, with a reason. */
+function YourCall({ step, companyId, onSaved }: { step: StepResult; companyId: string; onSaved: () => void }) {
+  const [keeping, setKeeping] = useState(false);
+  const [reason, setReason] = useState("");
+  const flagged = step.checks.filter((c) => c.status === "flag" && !c.info);
+  const key = `override.step${step.n}`;
+  const save = async (status: "pass" | "fail", why: string) => { await setUserValue(companyId, key, { status, reason: why }); onSaved(); };
+  return (
+    <div className="notice draft stack" style={{ gap: 8 }}>
+      <div>
+        <b style={{ fontWeight: 600 }}>Your call.</b> Claude's reading of the reports says this step fails on{" "}
+        {flagged.map((c) => c.label.toLowerCase()).join("; ")}. That's a judgment, so the company stays in until you decide.
+        Read Claude's reasoning below, and change any answer you disagree with, or decide the whole step here.
+      </div>
+      {!keeping ? (
+        <div className="row">
+          <button className="btn sm" onClick={() => save("fail", `Agreed with Claude: ${flagged.map((c) => c.label).join("; ")}`)}>Agree, it's off the island</button>
+          <button className="btn sm" onClick={() => setKeeping(true)}>Disagree, keep it in</button>
+        </div>
+      ) : (
+        <div className="row">
+          <input type="text" style={{ flex: 1, minWidth: 200 }} value={reason} onChange={(e) => setReason(e.target.value)} placeholder="Why it passes, e.g. the tailwind is the AI build-out, not this company's legal issues" aria-label="Why it passes" />
+          <button className="btn primary sm" disabled={!reason.trim()} onClick={() => save("pass", reason.trim())}>Keep it in</button>
+          <button className="btn ghost sm" onClick={() => setKeeping(false)}>Cancel</button>
+        </div>
+      )}
+    </div>
+  );
+}
+
 function Override({ step, companyId, onSaved }: { step: StepResult; companyId: string; onSaved: () => void }) {
   const [open, setOpen] = useState(false);
-  const [status, setStatus] = useState<"pass" | "fail">(step.computedStatus === "fail" ? "pass" : "fail");
+  const [status, setStatus] = useState<"pass" | "fail">(step.computedStatus === "fail" || step.computedStatus === "review" ? "pass" : "fail");
   const [reason, setReason] = useState("");
   const key = `override.step${step.n}`;
   if (step.overridden) {
@@ -52,7 +101,7 @@ function Override({ step, companyId, onSaved }: { step: StepResult; companyId: s
       <div className="notice row">
         <span style={{ flex: 1 }}>
           You marked this step as <b>{step.overridden.status === "pass" ? "passed" : "failed"}</b>
-          {step.overridden.reason ? `: ${step.overridden.reason}` : ""}. The checks alone say {step.computedStatus}.
+          {step.overridden.reason ? `: ${step.overridden.reason}` : ""}. The checks alone say: {STATUS_LABEL[step.computedStatus].toLowerCase()}.
         </span>
         <button className="btn sm" onClick={async () => { await clearUserValue(companyId, key); onSaved(); }}>Remove my override</button>
       </div>
@@ -103,11 +152,11 @@ export function StepPanel({
         <span className="n">{String(n).padStart(2, "0")}</span>
         <h2>{step.title}</h2>
         <span className="spacer" />
-        <span className={`verdict ${step.status === "pass" ? "survivor" : step.status === "fail" ? "off_island" : "incomplete"}`}>
-          {step.status === "pass" ? "Passed" : step.status === "fail" ? "Off the island" : "Not decided yet"}
-        </span>
+        <span className={`verdict ${STATUS_CLASS[step.status]}`}>{STATUS_LABEL[step.status]}</span>
       </div>
       <p className="muted">{STEP_BLURB[n]}</p>
+
+      {step.status === "review" && !step.overridden && <YourCall step={step} companyId={companyId} onSaved={onSaved} />}
 
       <ul className="checks">{normal.map((c, i) => <CheckRow key={i} c={c} />)}</ul>
       {kills.length > 0 && (
@@ -148,7 +197,12 @@ export function StepPanel({
       )}
 
       {n === 6 && <ScoreTable items={analysis.score.items} companyId={companyId} a={a} onSaved={onSaved} />}
-      {n === 12 && <button className="btn" onClick={() => onGoto("valuation")}>Open the valuation workbench</button>}
+      {n === 12 && (
+        <>
+          <DcaPanel plan={analysis.dca} a={a} companyId={companyId} onSaved={onSaved} quality={analysis.steps.slice(0, 11).every((x) => x.status === "pass")} />
+          <button className="btn" onClick={() => onGoto("valuation")}>Open the valuation workbench</button>
+        </>
+      )}
 
       {group && (
         <div className="row notice draft">

@@ -1,15 +1,19 @@
 // The 12-step process: every check, the 130-point scorecard and the overall verdict.
+import { dcaPlan, type DcaPlan } from "./dca";
 import { defaultInputs, valuation, type DcfInputs, type Valuation } from "./dcf";
 import { money, perShare, pct, times } from "./format";
 import type { Metrics } from "./metrics";
-import { eff, sourceOf, type AssessmentMap, type Check, type Market, type Status, type StepResult } from "./types";
+import { eff, sourceOf, type AssessmentMap, type Check, type Market, type Status, type StepResult, type StepStatus } from "./types";
 
 // ---------------------------------------------------------------- helpers
 
 const st = (c: boolean | null | undefined): Status => (c === null || c === undefined ? "unknown" : c ? "pass" : "fail");
 
+/** A failing check that rests on Claude's judgment is a flag, not an elimination, until the user agrees. */
+const soften = (status: Status, source: Check["source"]): Status => (status === "fail" && source === "ai" ? "flag" : status);
+
 function check(label: string, cond: boolean | null | undefined, extra: Omit<Check, "label" | "status"> = {}): Check {
-  return { label, status: st(cond), ...extra };
+  return { label, status: soften(st(cond), extra.source), ...extra };
 }
 
 function aiCheck(a: AssessmentMap, key: string, label: string, test: (v: any) => boolean | null, valueText?: (v: any) => string, extra: Partial<Check> = {}): Check {
@@ -17,7 +21,7 @@ function aiCheck(a: AssessmentMap, key: string, label: string, test: (v: any) =>
   const src = sourceOf(a, key);
   return {
     label,
-    status: v === undefined || v === null ? "unknown" : st(test(v)),
+    status: v === undefined || v === null ? "unknown" : soften(st(test(v)), src ?? undefined),
     value: v === undefined || v === null ? undefined : valueText ? valueText(v) : undefined,
     source: src ?? undefined,
     ...extra,
@@ -29,11 +33,13 @@ const nonEmpty = (v: any) => typeof v === "string" && v.trim().length > 0;
 
 function resolve(n: number, title: string, checks: Check[], a: AssessmentMap): StepResult {
   const counted = checks.filter((c) => !c.info);
-  const computedStatus = counted.some((c) => c.status === "fail")
+  const computedStatus: StepStatus = counted.some((c) => c.status === "fail")
     ? "fail"
-    : counted.some((c) => c.status === "unknown")
-      ? "incomplete"
-      : "pass";
+    : counted.some((c) => c.status === "flag")
+      ? "review"
+      : counted.some((c) => c.status === "unknown")
+        ? "incomplete"
+        : "pass";
   const ov = eff(a, `override.step${n}`);
   const overridden = ov && (ov.status === "pass" || ov.status === "fail") ? { status: ov.status, reason: ov.reason ?? "" } : null;
   return { n, title, checks, computedStatus, overridden, status: overridden ? overridden.status : computedStatus };
@@ -138,11 +144,20 @@ export interface Analysis {
   steps: StepResult[];
   score: ReturnType<typeof scorecard>;
   valuation: Valuation;
+  dca: DcaPlan;
   passed: number;
   failed: number[];
-  verdict: "survivor" | "off_island" | "incomplete";
+  /** Steps 1–11 that only Claude's judgment fails, waiting for the user's call. */
+  review: number[];
+  verdict: Verdict;
   isSoftware: boolean | null;
 }
+
+/**
+ * survivor: passes all 12. dca: passes 1–11 but priced above the bear case, so buy slowly.
+ * review: nothing fails for certain, but Claude flags at least one step for your call.
+ */
+export type Verdict = "survivor" | "dca" | "review" | "off_island" | "incomplete";
 
 export function analyze(m: Metrics, mk: Market | null, a: AssessmentMap, now = new Date()): Analysis {
   const isSoftware: boolean | null = eff(a, "fact.is_software") ?? null;
@@ -153,9 +168,13 @@ export function analyze(m: Metrics, mk: Market | null, a: AssessmentMap, now = n
   const steps: StepResult[] = [];
 
   // 1. Secular trend
+  // The five tests judge the TREND the company rides (is AI infrastructure real?), as the guide
+  // says: "A trend is real only if it checks all five." The company itself is judged on how
+  // squarely it sits on that trend, on the market misreading it, and on the skip zones.
   {
     const tc = eff(a, "step1.trend_checks") ?? {};
     const tsrc = sourceOf(a, "step1.trend_checks") ?? undefined;
+    const trend: string | undefined = eff(a, "step1.trend_name") || undefined;
     const labels: [string, string][] = [
       ["real_demand", "Real demand and paying customers"],
       ["sustainable_growth", "Sustainable revenue and earnings growth"],
@@ -166,14 +185,19 @@ export function analyze(m: Metrics, mk: Market | null, a: AssessmentMap, now = n
     const answered = labels.filter(([k]) => typeof tc[k] === "boolean");
     const passedN = labels.filter(([k]) => tc[k] === true).length;
     const failedL = labels.filter(([k]) => tc[k] === false).map(([, l]) => l.toLowerCase());
+    const onTrend = scoreOf("secular_trend");
     const checks: Check[] = [{
-      label: "Passes all five trend tests",
-      status: failedL.length ? "fail" : answered.length === 5 ? "pass" : "unknown",
+      label: trend ? `The trend (${trend}) passes all five trend tests` : "The trend passes all five trend tests",
+      status: soften(failedL.length ? "fail" : answered.length === 5 ? "pass" : "unknown", tsrc),
       value: answered.length ? `${passedN} of 5` : undefined,
       detail: failedL.length ? `Fails: ${failedL.join("; ")}` : undefined,
       source: tsrc,
     }];
-    checks.push(aiCheck(a, "step1.gap", "A real gap between the market's story and what it's becoming", (v) => v === true, yesNo));
+    checks.push(check("The company is on this trend, not disrupted by it", onTrend === null ? null : onTrend >= 5, {
+      value: onTrend === null ? undefined : `${onTrend}/10 on scorecard`,
+      source: sourceOf(a, "score.secular_trend") ?? undefined,
+    }));
+    checks.push(aiCheck(a, "step1.gap", "The market misreads what the business is becoming (price aside)", (v) => v === true, yesNo));
     checks.push(aiCheck(a, "step1.skip_zone", "Not in a skip zone", (v) => v === "none", (v) => (v === "none" ? "None" : String(v).replace("_", " "))));
     steps.push(resolve(1, "Find the secular trend", checks, a));
   }
@@ -365,7 +389,7 @@ export function analyze(m: Metrics, mk: Market | null, a: AssessmentMap, now = n
   {
     const bear = val.cases.bear.perShare;
     const checks: Check[] = [
-      check("Even the bear case (12%) is worth more than today's price", bear === null || m.price === null ? null : bear > m.price, {
+      check("Cheap even on the bear case: worth more at 12% than today's price", bear === null || m.price === null ? null : bear > m.price, {
         value: bear !== null && m.price !== null ? `${perShare(bear)} vs. ${perShare(m.price)}` : val.missing.length ? `Missing: ${val.missing.join(", ")}` : undefined,
         source: "computed",
       }),
@@ -379,10 +403,29 @@ export function analyze(m: Metrics, mk: Market | null, a: AssessmentMap, now = n
     steps.push(resolve(12, "Valuation", checks, a));
   }
 
-  const failed = steps.filter((s) => s.status === "fail").map((s) => s.n);
+  // Step 12 is about price, not quality: failing it means "great business, wait for a better price",
+  // so it never sends a company off the island. It feeds the DCA plan instead.
+  const s12 = steps[11];
+  if (s12.status === "fail") s12.status = "expensive";
+  if (s12.computedStatus === "fail") s12.computedStatus = "expensive";
+
+  const quality = steps.slice(0, 11);
+  const failed = quality.filter((s) => s.status === "fail").map((s) => s.n);
+  const review = quality.filter((s) => s.status === "review").map((s) => s.n);
   const passed = steps.filter((s) => s.status === "pass").length;
-  const verdict = failed.length ? "off_island" : passed === 12 ? "survivor" : "incomplete";
-  return { steps, score, valuation: val, passed, failed, verdict, isSoftware };
+  const qualityPassed = quality.every((s) => s.status === "pass");
+  const verdict: Verdict = failed.length
+    ? "off_island"
+    : review.length
+      ? "review"
+      : qualityPassed && s12.status === "pass"
+        ? "survivor"
+        : qualityPassed && s12.status === "expensive"
+          ? "dca"
+          : "incomplete";
+  const plan = eff(a, "dca.plan") ?? {};
+  const dca = dcaPlan(val, m.price, typeof plan.monthly === "number" ? plan.monthly : null, typeof plan.months === "number" ? plan.months : undefined);
+  return { steps, score, valuation: val, dca, passed, failed, review, verdict, isSoftware };
 }
 
 function reasonLabel(r: string): string {

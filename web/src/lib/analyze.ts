@@ -14,6 +14,8 @@ export function analyzeBundle(b: Bundle): Analyzed {
 
 export const VERDICT_LABEL = {
   survivor: "Survives all 12",
+  dca: "Great business · DCA in",
+  review: "Needs your call",
   off_island: "Off the island",
   incomplete: "In progress",
 } as const;

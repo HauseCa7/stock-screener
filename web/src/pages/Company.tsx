@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { Link, useNavigate, useParams } from "react-router-dom";
 import { MarketPanel, Reports } from "../components/Reports";
+import { DcaPanel } from "../components/DcaPanel";
 import { Financials } from "../components/Financials";
 import { ScoreTable } from "../components/Scorecard";
 import { StepPanel } from "../components/StepPanel";
@@ -179,15 +180,21 @@ export default function CompanyPage() {
               <ol>
                 {an.steps.map((s) => (
                   <li key={s.n} className={s.status}>
-                    <button aria-current={sel === s.n} onClick={() => setSel(s.n)}>
-                      <span className="node">{s.status === "pass" ? "✓" : s.n}</span>
+                    <button aria-current={sel === s.n} onClick={() => setSel(s.n)} title={s.status === "review" ? "Claude flags this step. Your call." : s.status === "expensive" ? "Priced above the bear case: see the DCA plan" : undefined}>
+                      <span className="node">{s.status === "pass" ? "✓" : s.status === "review" ? "!" : s.n}</span>
                       <span className="title">{s.title}{s.overridden && <span className="muted small"> (your call)</span>}</span>
                     </button>
                   </li>
                 ))}
               </ol>
-              <div className={`survives ${an.verdict === "survivor" ? "done" : ""}`}>
-                {an.verdict === "survivor" ? "Survives all 12. A company you could own for 20 years." : `${an.passed} of 12 passed`}
+              <div className={`survives ${an.verdict === "survivor" ? "done" : an.verdict === "dca" ? "dca" : an.verdict === "review" ? "review" : ""}`}>
+                {an.verdict === "survivor"
+                  ? "Survives all 12. A company you could own for 20 years."
+                  : an.verdict === "dca"
+                    ? <>A business that passes. Priced high, so DCA in. <button className="btn ghost sm" onClick={() => setSel(12)}>See the plan</button></>
+                    : an.verdict === "review"
+                      ? `Claude flags step${an.review.length > 1 ? "s" : ""} ${an.review.join(", ")}. Your call.`
+                      : `${an.passed} of 12 passed`}
               </div>
             </div>
             <div className={`lane ${an.failed.length ? "active" : ""}`}>Off the island</div>
@@ -221,7 +228,10 @@ export default function CompanyPage() {
       {tab === "financials" && <Financials companyId={c.id} rows={b.financials} docs={b.docs} onSaved={reload} />}
 
       {tab === "valuation" && (
-        <Valuation v={an.valuation} m={m} market={b.market} a={b.assessments} companyId={c.id} isSoftware={an.isSoftware} onSaved={reload} />
+        <div className="stack">
+          <Valuation v={an.valuation} m={m} market={b.market} a={b.assessments} companyId={c.id} isSoftware={an.isSoftware} onSaved={reload} />
+          <DcaPanel plan={an.dca} a={b.assessments} companyId={c.id} onSaved={reload} quality={an.steps.slice(0, 11).every((x) => x.status === "pass")} />
+        </div>
       )}
 
       {tab === "data" && (

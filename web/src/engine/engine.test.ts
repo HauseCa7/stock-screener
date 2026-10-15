@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import { dcaPlan } from "./dca";
 import { enterpriseValue, impliedGrowth } from "./dcf";
 import { computeMetrics } from "./metrics";
 import { Series } from "./series";
@@ -145,5 +146,76 @@ describe("DCF", () => {
   it("reverse DCF recovers the growth rate", () => {
     const ev = enterpriseValue(100, 0.18, 0.2, 0.1);
     expect(impliedGrowth(100, 0.2, ev)!).toBeCloseTo(0.18, 4);
+  });
+});
+
+describe("Claude flags vs. hard fails", () => {
+  const market: Market = { price: 100, market_cap: 2000e9, shares_outstanding: 20e9, short_interest_pct: 1, institutional_pct: 70, return_5y_pct: 200, spx_return_5y_pct: 90, earnings_misses_last4: 0 };
+  const m = computeMetrics(fixture(), market);
+  const ai = (key: string, v: any) => ({ [key]: { key, ai_value: v, user_value: null } });
+
+  it("a failing judgment from Claude flags the step instead of eliminating", () => {
+    const r = analyze(m, market, { ...ai("step1.gap", false) });
+    const gap = r.steps[0].checks.find((c) => c.label.startsWith("The market misreads"))!;
+    expect(gap.status).toBe("flag");
+    expect(r.steps[0].status).toBe("review");
+    expect(r.failed).not.toContain(1);
+    expect(r.verdict).toBe("review");
+  });
+
+  it("the same answer from the user is a hard fail", () => {
+    const r = analyze(m, market, { "step1.gap": { key: "step1.gap", ai_value: true, user_value: false } });
+    expect(r.steps[0].status).toBe("fail");
+    expect(r.verdict).toBe("off_island");
+  });
+
+  it("agreeing with Claude's flag sends it off the island", () => {
+    const r = analyze(m, market, { ...ai("step1.gap", false), "override.step1": { key: "override.step1", ai_value: null, user_value: { status: "fail", reason: "Agreed" } } });
+    expect(r.steps[0].status).toBe("fail");
+    expect(r.verdict).toBe("off_island");
+  });
+
+  it("number rules still eliminate on their own", () => {
+    const thin = computeMetrics(fixture(), { ...market, short_interest_pct: 14 });
+    const r = analyze(thin, { ...market, short_interest_pct: 14 }, {});
+    expect(r.steps[2].status).toBe("fail");
+    expect(r.verdict).toBe("off_island");
+  });
+
+  it("step 12 never eliminates: a pricey quality business is 'expensive'", () => {
+    const pricey = { ...market, price: 1e6, market_cap: 2e16 };
+    const r = analyze(computeMetrics(fixture(), pricey), pricey, {});
+    expect(r.steps[11].status).toBe("expensive");
+    expect(r.failed).not.toContain(12);
+  });
+});
+
+describe("DCA plan", () => {
+  const val = (bear: number | null, base: number | null, bull: number | null, gap: number | null = 5) => ({
+    inputs: {} as any,
+    cases: { bear: { rate: 0.12, perShare: bear, upsidePct: null }, base: { rate: 0.1, perShare: base, upsidePct: null }, bull: { rate: 0.08, perShare: bull, upsidePct: null } },
+    impliedGrowthPct: null, growthGapPct: gap, priceToSales: null, peg: null, missing: [],
+  });
+
+  it("scales the monthly amount by price zone", () => {
+    const v = val(80, 100, 130);
+    expect(dcaPlan(v, 70, 1000).zone.id).toBe("below_bear");
+    expect(dcaPlan(v, 70, 1000).thisMonth).toBe(1500);
+    expect(dcaPlan(v, 90, 1000).zone.id).toBe("fair");
+    expect(dcaPlan(v, 120, 1000).thisMonth).toBe(750);
+    expect(dcaPlan(v, 200, 1000).zone.id).toBe("rich");
+    expect(dcaPlan(v, 200, 1000).setAside).toBe(500);
+  });
+
+  it("buys only starter amounts when the market wants more growth than delivered", () => {
+    const p = dcaPlan(val(80, 100, 130, -8), 200, 1000);
+    expect(p.zone.id).toBe("stretched");
+    expect(p.thisMonth).toBe(250);
+  });
+
+  it("falls back to half amounts without a usable valuation", () => {
+    const p = dcaPlan(val(-5, -3, -1), 50, 400);
+    expect(p.zone.id).toBe("unpriced");
+    expect(p.thisMonth).toBe(200);
   });
 });

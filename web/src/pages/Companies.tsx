@@ -4,7 +4,7 @@ import { money } from "../engine/format";
 import { createCompany, loadEverything, type Bundle } from "../lib/api";
 import { analyzeBundle, VERDICT_LABEL } from "../lib/analyze";
 
-type Filter = "all" | "survivor" | "incomplete" | "off_island";
+type Filter = "all" | "survivor" | "dca" | "review" | "incomplete" | "off_island";
 
 export default function Companies() {
   const [bundles, setBundles] = useState<Bundle[] | null>(null);
@@ -61,8 +61,8 @@ export default function Companies() {
       {err && <div className="notice error">{err}</div>}
 
       {bundles && bundles.length > 0 && (
-        <div className="seg" role="group" aria-label="Filter">
-          {(["all", "survivor", "incomplete", "off_island"] as Filter[]).map((f) => (
+        <div className="seg" role="group" aria-label="Filter" style={{ flexWrap: "wrap", maxWidth: "100%" }}>
+          {(["all", "survivor", "dca", "review", "incomplete", "off_island"] as Filter[]).map((f) => (
             <button key={f} aria-pressed={filter === f} onClick={() => setFilter(f)}>
               {f === "all" ? `All (${rows.length})` : `${VERDICT_LABEL[f]} (${rows.filter((r) => r.analysis.verdict === f).length})`}
             </button>
