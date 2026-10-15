@@ -22,7 +22,16 @@ const HEADINGS: Record<string, RegExp> = {
   cash: /statements?\s+of\s+cash\s+flows?|cash\s+flows?\s+statements?/i,
 };
 
-const NOTES = /note\s*\d+\s*[\u2014\u2013:.-]+\s*(debt|borrowings|long-term debt|leases)\b|^\s*(debt|long-term debt|borrowings)\s*$/im;
+const NOTES = /note\s*\d+\s*[\u2014\u2013:.-]+\s*[^\n]{0,50}?\b(debt|borrowings|financing activities|credit facilit\w*|notes payable|convertible (senior )?notes|leases)\b|^\s*(debt|long-term debt|borrowings)\s*$/im;
+const EPS_NOTE = /note\s*\d+\s*[\u2014\u2013:.-]+\s*[^\n]{0,30}?(earnings|income|loss)[^\n]{0,20}?per share/i;
+
+// Line items that identify each statement by its contents, for PDFs whose title text is missing
+// or attached to the wrong page.
+const CONTENT: Record<string, RegExp[]> = {
+  income: [/total (net )?revenues?|net sales|total revenues/i, /operating expenses|cost of (revenue|sales)/i, /net (income|loss|earnings)/i, /per share/i, /diluted/i, /income (taxes|tax expense)|provision for income tax/i],
+  balance: [/total assets/i, /total liabilities/i, /(stockholders|shareholders)['’]? equity/i, /current assets/i, /cash and cash equivalents/i, /accumulated deficit|retained earnings/i],
+  cash: [/operating activities/i, /investing activities/i, /financing activities/i, /net cash (provided|used)/i, /depreciation/i, /end of (the )?(period|year)/i],
+};
 const isHeading = (t: string, n = 600) => Object.values(HEADINGS).some((h) => h.test(t.slice(0, n)));
 
 function selectPages(pages: string[]): { idx: number[]; snippets: string[] } {
@@ -54,6 +63,14 @@ function selectPages(pages: string[]): { idx: number[]; snippets: string[] } {
     const strong = ranked.filter((x) => x.score >= 300).slice(0, 2);
     for (const { i } of strong.length ? strong : ranked.slice(0, 1)) addWithNext(i);
   }
+  // By contents: the page with the most of a statement's line items, even without a title.
+  for (const pats of Object.values(CONTENT)) {
+    const best = pages
+      .map((t, i) => ({ i, hits: pats.filter((r) => r.test(t)).length, d: numericDensity(t) }))
+      .filter((x) => x.hits >= 5 && x.d >= 25)
+      .sort((a, b) => b.hits - a.hits || b.d - a.d)[0];
+    if (best) addWithNext(best.i);
+  }
   // Fallback: no clear statements found → most number-dense pages that mention a heading anywhere.
   if (chosen.size === 0) {
     pages
@@ -66,8 +83,14 @@ function selectPages(pages: string[]): { idx: number[]; snippets: string[] } {
   // Debt and lease footnotes, so total debt includes the current portion and finance leases.
   let notes = 0;
   pages.forEach((t, i) => {
-    if (notes < 3 && NOTES.test(t.slice(0, 800)) && numericDensity(t) >= 10) { addWithNext(i); notes++; }
+    const m = NOTES.exec(t.slice(0, 800));
+    // Skip pages that only point to the note ("Refer to Note 11 - Financing Activities").
+    const pointer = m && /(refer|see|in)\s+(to\s+)?$/i.test(t.slice(Math.max(0, m.index - 12), m.index));
+    if (notes < 4 && m && !pointer && numericDensity(t) >= 10) { addWithNext(i); notes++; }
   });
+  // Earnings-per-share note, for when the income statement doesn't show diluted EPS and shares.
+  const eps = pages.findIndex((t) => EPS_NOTE.test(t.slice(0, 800)) && numericDensity(t) >= 15);
+  if (eps >= 0) addWithNext(eps);
   // Cover page(s) for shares outstanding.
   chosen.add(0);
   if (pages.length > 1) chosen.add(1);
@@ -138,7 +161,7 @@ Periods:
 
 Metric definitions (report values as printed, give the multiplier: 'in thousands' = 1000, 'in millions' = 1000000; share counts can have a different scale than dollars; diluted_eps and ndr_pct use multiplier 1):
 - revenue: total revenue / net sales.
-- operating_income: income (loss) from operations / operating profit. Omit if the statement has none (e.g., banks).
+- operating_income: income (loss) from operations / operating profit. If no such line is printed but the statement shows total revenues and total operating expenses (common at brokers and fintechs), use total revenues minus total operating expenses and say so in warnings. Omit only if neither is available (e.g., banks).
 - net_income: net income attributable to the company's shareholders.
 - interest_expense: gross interest expense as a positive number. Omit if only a combined 'interest and other, net' line exists.
 - operating_cash_flow: net cash provided by (used in) operating activities.
