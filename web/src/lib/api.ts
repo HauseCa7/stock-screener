@@ -87,22 +87,45 @@ export async function loadCompany(id: string): Promise<Bundle> {
   };
 }
 
+/**
+ * Reads every row of a table. The API returns at most 1,000 rows per request, so a single
+ * request silently drops the rest once the table grows; this pages through until done.
+ */
+async function fetchAll<T>(table: string, columns = "*", orderBy = "id"): Promise<T[]> {
+  const PAGE = 1000;
+  const out: T[] = [];
+  for (let from = 0; ; from += PAGE) {
+    const { data, error } = await supabase.from(table).select(columns).order(orderBy).range(from, from + PAGE - 1);
+    if (error) throw new Error(error.message);
+    out.push(...((data ?? []) as T[]));
+    if (!data || data.length < PAGE) return out;
+  }
+}
+
 export async function loadEverything(): Promise<Bundle[]> {
-  const [c, d, f, m, a] = await Promise.all([
-    supabase.from("companies").select("*").order("ticker"),
-    supabase.from("documents").select(DOC_COLS),
-    supabase.from("financials").select("*").limit(50000),
-    supabase.from("market_data").select("*"),
-    supabase.from("assessments").select("*").limit(50000),
+  const [companies, docs, fins, markets, assessments] = await Promise.all([
+    supabase.from("companies").select("*").order("ticker").then((r) => (must(r) ?? []) as Company[]),
+    fetchAll<Doc>("documents", DOC_COLS),
+    fetchAll<FinRow>("financials"),
+    fetchAll<Market & { company_id: string }>("market_data", "*", "company_id"),
+    fetchAll<Assessment & { company_id: string }>("assessments"),
   ]);
-  const companies = (must(c) ?? []) as Company[];
-  const by = <T extends { company_id?: string }>(rows: T[], id: string) => rows.filter((r: any) => r.company_id === id);
+  const group = <T,>(rows: T[]) => {
+    const m = new Map<string, T[]>();
+    for (const r of rows) {
+      const id = (r as any).company_id as string;
+      if (!m.has(id)) m.set(id, []);
+      m.get(id)!.push(r);
+    }
+    return m;
+  };
+  const d = group(docs), f = group(fins), a = group(assessments);
   return companies.map((co) => ({
     company: co,
-    docs: by((d.data ?? []) as Doc[], co.id),
-    financials: by((f.data ?? []) as any[], co.id) as FinRow[],
-    market: ((m.data ?? []) as any[]).find((x) => x.company_id === co.id) ?? null,
-    assessments: Object.fromEntries((by((a.data ?? []) as any[], co.id) as Assessment[]).map((x) => [x.key, x])),
+    docs: d.get(co.id) ?? [],
+    financials: f.get(co.id) ?? [],
+    market: (markets.find((x) => x.company_id === co.id) ?? null) as Market | null,
+    assessments: Object.fromEntries((a.get(co.id) ?? []).map((x) => [x.key, x])),
   }));
 }
 
