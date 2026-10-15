@@ -176,12 +176,57 @@ function normalize(schema: any, input: any): Record<string, any> {
     if (inner) input = inner;
   }
   for (const key of keys) {
-    const raw = key in input ? input[key] : input[key.replace("__", ".")];
+    let raw = key in input ? input[key] : input[key.replace("__", ".")];
     if (raw === undefined) continue;
+    raw = parseJsonString(raw); // the whole item sometimes arrives as JSON text
     const wrapped = raw !== null && typeof raw === "object" && !Array.isArray(raw) && "value" in raw;
-    out[key] = wrapped ? raw : { value: raw, rationale: "", evidence: [] };
+    const item = wrapped ? { ...raw } : { value: raw, rationale: "", evidence: [] };
+    item.value = coerce(item.value, schema.properties[key].properties?.value);
+    if (typeof item.rationale !== "string") item.rationale = item.rationale == null ? "" : String(item.rationale);
+    item.evidence = Array.isArray(parseJsonString(item.evidence)) ? parseJsonString(item.evidence) : [];
+    out[key] = item;
   }
   return out;
+}
+
+/** "{...}" or "[...]" text → the object it describes; anything else unchanged. */
+function parseJsonString(v: any): any {
+  if (typeof v !== "string") return v;
+  const t = v.trim();
+  if (!/^[[{]/.test(t)) return v;
+  try { return JSON.parse(t); } catch { return v; }
+}
+
+/** Brings a value to the type its schema asks for: "10" → 10, "true" → true, JSON text → object. */
+function coerce(v: any, want: any): any {
+  if (!want || v === null || v === undefined) return v;
+  v = parseJsonString(v);
+  switch (want.type) {
+    case "integer":
+    case "number": {
+      if (typeof v === "string" && v.trim() !== "" && Number.isFinite(Number(v.trim()))) v = Number(v.trim());
+      return want.type === "integer" && typeof v === "number" ? Math.round(v) : v;
+    }
+    case "boolean":
+      if (typeof v === "string") {
+        const t = v.trim().toLowerCase();
+        if (["true", "yes"].includes(t)) return true;
+        if (["false", "no"].includes(t)) return false;
+      }
+      return v;
+    case "string":
+      return typeof v === "string" && want.enum ? (want.enum.find((e: string) => e.toLowerCase() === v.trim().toLowerCase()) ?? v) : v;
+    case "array":
+      return Array.isArray(v) ? v.map((x) => coerce(x, want.items)) : v;
+    case "object":
+      if (v && typeof v === "object" && !Array.isArray(v) && want.properties) {
+        const o: any = { ...v };
+        for (const [k, sub] of Object.entries<any>(want.properties)) if (k in o) o[k] = coerce(o[k], sub);
+        return o;
+      }
+      return v;
+  }
+  return v;
 }
 
 /** Every field the tool asks for must be there, with a value of the right basic type. */
