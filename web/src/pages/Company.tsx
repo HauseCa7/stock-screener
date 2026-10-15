@@ -22,6 +22,12 @@ const TABS: [Tab, string][] = [
   ["data", "Reports and data"],
 ];
 
+/** Fields Claude couldn't answer cleanly are left blank for the user rather than failing the whole section. */
+function skippedNote(keys: string[]): string {
+  const steps = [...new Set(keys.map((k) => k.split(".")[0]))].map((g) => (g.startsWith("step") ? `step ${g.slice(4)}` : g === "score" ? "the scorecard" : g));
+  return `Claude's draft was saved, but ${keys.length === 1 ? "one answer" : `${keys.length} answers`} (${keys.join(", ")}) came back unusable and ${keys.length === 1 ? "was" : "were"} left blank in ${steps.join(", ")}. Fill ${keys.length === 1 ? "it" : "them"} in yourself or click Draft again.`;
+}
+
 export default function CompanyPage() {
   const { id } = useParams();
   const nav = useNavigate();
@@ -32,6 +38,7 @@ export default function CompanyPage() {
   const [sel, setSel] = useState(1);
   const [drafting, setDrafting] = useState<string | null>(null);
   const [progress, setProgress] = useState<string | null>(null);
+  const [note, setNote] = useState<string | null>(null);
 
   const reload = useCallback(async () => {
     try {
@@ -67,8 +74,10 @@ export default function CompanyPage() {
   async function draftOne(group: string) {
     setDrafting(group);
     setErr(null);
+    setNote(null);
     try {
-      await draftGroup(c.id, group as Group, metricsSummary(m!, b!.market, c.currency ?? "USD"), prefs.judgeModel);
+      const r = await draftGroup(c.id, group as Group, metricsSummary(m!, b!.market, c.currency ?? "USD"), prefs.judgeModel);
+      if (r.skipped?.length) setNote(skippedNote(r.skipped));
       await reload();
     } catch (e: any) {
       setErr(e.message);
@@ -78,7 +87,9 @@ export default function CompanyPage() {
 
   async function runAll() {
     setErr(null);
+    setNote(null);
     const problems: string[] = [];
+    const skipped: string[] = [];
     setDrafting("all");
     try {
       setProgress("Fetching market data…");
@@ -88,13 +99,14 @@ export default function CompanyPage() {
       const summary = metricsSummary(computeMetrics(fresh.financials, fresh.market), fresh.market, c.currency ?? "USD");
       // The first call caches the documents for five minutes; the rest reuse that cache at a fraction of the cost.
       setProgress(`Claude is reading the reports: ${GROUP_LABEL.trend}…`);
-      await draftGroup(c.id, "trend", summary, prefs.judgeModel);
+      skipped.push(...((await draftGroup(c.id, "trend", summary, prefs.judgeModel)).skipped ?? []));
       const rest = GROUPS.filter((g) => g !== "trend");
       let done = 0;
       setProgress(`Claude is drafting the other ${rest.length} sections…`);
       const results = await Promise.allSettled(
         rest.map((g) => draftGroup(c.id, g, summary, prefs.judgeModel).finally(() => setProgress(`Claude is drafting: ${++done} of ${rest.length} done…`))),
       );
+      results.forEach((r) => { if (r.status === "fulfilled") skipped.push(...(r.value.skipped ?? [])); });
       results.forEach((r, i) => { if (r.status === "rejected") problems.push(`${GROUP_LABEL[rest[i]]}: ${r.reason?.message ?? r.reason}`); });
       const after = await loadCompany(c.id);
       setB(after);
@@ -107,6 +119,7 @@ export default function CompanyPage() {
     setProgress(null);
     setDrafting(null);
     if (problems.length) setErr(problems.join(" "));
+    if (skipped.length) setNote(skippedNote(skipped));
   }
 
   const noDocs = b.docs.length === 0;
@@ -148,6 +161,7 @@ export default function CompanyPage() {
         </div>
       )}
       {err && <div className="notice error" style={{ marginBottom: 12 }}>{err}</div>}
+      {note && <div className="notice" style={{ marginBottom: 12 }}>{note}</div>}
       {noDocs && tab !== "data" && (
         <div className="notice" style={{ marginBottom: 12 }}>
           No reports yet. <button className="btn sm" onClick={() => setTab("data")}>Upload reports</button>

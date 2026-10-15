@@ -176,14 +176,18 @@ function normalize(schema: any, input: any): Record<string, any> {
     if (inner) input = inner;
   }
   for (const key of keys) {
-    let raw = key in input ? input[key] : input[key.replace("__", ".")];
+    const dotted = key.replace("__", ".");
+    let raw = key in input ? input[key] : input[dotted];
     if (raw === undefined) continue;
     raw = parseJsonString(raw); // the whole item sometimes arrives as JSON text
     const wrapped = raw !== null && typeof raw === "object" && !Array.isArray(raw) && "value" in raw;
-    const item = wrapped ? { ...raw } : { value: raw, rationale: "", evidence: [] };
+    // A plain value may have its rationale beside it, e.g. "step9__moats_rationale" or "step9__moats_rationale_note".
+    const sideKey = Object.keys(input).find((k) => (k.startsWith(`${key}_`) || k.startsWith(`${dotted}_`)) && /rationale|note|reason/i.test(k));
+    const item = wrapped ? { ...raw } : { value: raw, rationale: sideKey ? input[sideKey] : "", evidence: [] };
     item.value = coerce(item.value, schema.properties[key].properties?.value);
-    if (typeof item.rationale !== "string") item.rationale = item.rationale == null ? "" : String(item.rationale);
-    item.evidence = Array.isArray(parseJsonString(item.evidence)) ? parseJsonString(item.evidence) : [];
+    if (typeof item.rationale !== "string") item.rationale = item.rationale == null ? "" : typeof item.rationale === "object" ? JSON.stringify(item.rationale) : String(item.rationale);
+    const evidence = parseJsonString(item.evidence);
+    item.evidence = Array.isArray(evidence) ? evidence.filter((e: any) => e && typeof e === "object" && typeof e.quote === "string") : [];
     out[key] = item;
   }
   return out;
@@ -216,9 +220,26 @@ function coerce(v: any, want: any): any {
       return v;
     case "string":
       return typeof v === "string" && want.enum ? (want.enum.find((e: string) => e.toLowerCase() === v.trim().toLowerCase()) ?? v) : v;
-    case "array":
+    case "array": {
+      if (typeof v === "string") {
+        const t = v.trim();
+        if (t === "" || /^(none|n\/a|no moats?)\.?$/i.test(t)) return [];
+        if (want.items?.type === "string") return t.split(/\n+|;\s*/).map((x) => x.replace(/^[-*\d.)\s]+/, "").trim()).filter(Boolean);
+        return v;
+      }
+      if (v && typeof v === "object" && !Array.isArray(v)) {
+        const props = want.items?.properties;
+        // One item sent on its own instead of a list.
+        if (props && Object.keys(v).some((k) => k in props)) v = [v];
+        // Items keyed by their type, e.g. {"switching_costs": {"strength": "strong", ...}}.
+        else if (props?.type) v = Object.entries(v).map(([k, x]) => (x && typeof x === "object" ? { type: k, ...x } : { type: k, note: String(x ?? "") }));
+        else return v;
+      }
       return Array.isArray(v) ? v.map((x) => coerce(x, want.items)) : v;
+    }
     case "object":
+      // A bare label where an object with a "type" is expected, e.g. "brand" → {type: "brand"}.
+      if (typeof v === "string" && want.properties?.type) v = { type: v };
       if (v && typeof v === "object" && !Array.isArray(v) && want.properties) {
         const o: any = { ...v };
         for (const [k, sub] of Object.entries<any>(want.properties)) if (k in o) o[k] = coerce(o[k], sub);
@@ -229,10 +250,8 @@ function coerce(v: any, want: any): any {
   return v;
 }
 
-/** Every field the tool asks for must be there, with a value of the right basic type. */
-function checkAnswer(schema: any, rawInput: any): string | null {
-  if (!rawInput || typeof rawInput !== "object") return "The answer was empty.";
-  const input = normalize(schema, rawInput);
+/** Problems with each field: missing, or a value of the wrong basic type. */
+function fieldProblems(schema: any, input: Record<string, any>): { missing: string[]; wrong: string[] } {
   const missing: string[] = [];
   const wrong: string[] = [];
   for (const [key, prop] of Object.entries<any>(schema.properties)) {
@@ -245,16 +264,29 @@ function checkAnswer(schema: any, rawInput: any): string | null {
     const v = item.value;
     const ok =
       !want?.type ? true
-      : want.type === "array" ? Array.isArray(v)
+      : want.type === "array" ? Array.isArray(v) && v.every((x: any) => want.items?.type !== "object" || (x && typeof x === "object" && !Array.isArray(x)))
       : want.type === "object" ? typeof v === "object" && !Array.isArray(v) && Object.keys(want.properties ?? {}).every((k) => k in v)
       : want.type === "integer" ? Number.isInteger(v)
       : typeof v === want.type;
     if (!ok) wrong.push(key);
     else if (want?.enum && !want.enum.includes(v)) wrong.push(`${key} (must be one of ${want.enum.join(", ")})`);
   }
+  return { missing, wrong };
+}
+
+/** Every field the tool asks for must be there, with a value of the right basic type. */
+function checkAnswer(schema: any, rawInput: any): string | null {
+  if (!rawInput || typeof rawInput !== "object") return "The answer was empty.";
+  const { missing, wrong } = fieldProblems(schema, normalize(schema, rawInput));
   if (!missing.length && !wrong.length) return null;
-  const got = Object.keys(rawInput).slice(0, 12).join(", ") || "nothing";
-  return [missing.length && `missing ${missing.join(", ")}`, wrong.length && `wrong format for ${wrong.join(", ")}`].filter(Boolean).join("; ") + ` (received: ${got}).`;
+  const sample = (k: string) => {
+    const r = rawInput[k.split(" ")[0]];
+    return r === undefined ? "" : ` got ${clip(JSON.stringify(r), 160)}`;
+  };
+  return [
+    missing.length && `missing ${missing.join(", ")}`,
+    wrong.length && `wrong format for ${wrong.map((w) => w + sample(w)).join("; ")}`,
+  ].filter(Boolean).join("; ") + ` (received: ${Object.keys(rawInput).slice(0, 12).join(", ") || "nothing"}).`;
 }
 
 Deno.serve(handler(async (req) => {
@@ -302,6 +334,8 @@ Deno.serve(handler(async (req) => {
       // shared document cache. So the tools stay non-strict and every answer is checked here.
       strict: false,
       validate: (input) => checkAnswer(TOOLS.find((t) => t.name === toolName)!.input_schema, input),
+      // If one field is still malformed after the retry, save the rest and leave that one for the user.
+      acceptPartial: true,
       content: [
         // Identical across groups → cached after the first call (5 min).
         {
@@ -319,7 +353,13 @@ Deno.serve(handler(async (req) => {
     if (out.toolName !== toolName) throw new Error(`Claude answered with ${out.toolName} instead of ${toolName}.`);
 
     const now = new Date().toISOString();
-    const answer = normalize(TOOLS.find((t) => t.name === toolName)!.input_schema, out.input);
+    const schema = TOOLS.find((t) => t.name === toolName)!.input_schema;
+    const answer = normalize(schema, out.input);
+    const { missing, wrong } = fieldProblems(schema, answer);
+    const skipped = [...missing, ...wrong.map((w) => w.split(" ")[0])];
+    for (const k of skipped) delete answer[k];
+    if (!Object.keys(answer).length) throw new Error(`Claude's ${toolName} answer couldn't be used (${out.problem}). Try again.`);
+    if (out.problem) console.warn(`partial ${toolName}: ${out.problem}`);
     const rows = Object.entries(answer).map(([k, v]) => ({
       company_id,
       key: k.replace("__", "."),
@@ -333,7 +373,7 @@ Deno.serve(handler(async (req) => {
     if (error) throw new Error(error.message);
 
     await finishRun(ctx, runId, model, usage);
-    return json({ ok: true, keys: rows.map((r) => r.key), usage });
+    return json({ ok: true, keys: rows.map((r) => r.key), skipped: skipped.map((k) => k.replace("__", ".")), usage });
   } catch (e) {
     await finishRun(ctx, runId, model, usage, (e as Error).message);
     throw e;

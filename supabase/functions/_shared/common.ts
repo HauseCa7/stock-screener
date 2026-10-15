@@ -102,6 +102,8 @@ export interface ClaudeCall {
   strict?: boolean;
   /** For non-strict tools: return a description of what's wrong with the answer, or null if it's fine. */
   validate?: (input: any) => string | null;
+  /** When the retry is still incomplete, return that last answer instead of failing (the caller keeps the good parts). */
+  acceptPartial?: boolean;
 }
 
 /**
@@ -126,7 +128,7 @@ export function strictify(schema: any): any {
   return out;
 }
 
-export async function callClaude(c: ClaudeCall): Promise<{ toolName: string; input: any; usage: Usage }> {
+export async function callClaude(c: ClaudeCall): Promise<{ toolName: string; input: any; usage: Usage; problem?: string | null }> {
   const key = Deno.env.get("ANTHROPIC_API_KEY");
   if (!key) {
     throw new HttpError(
@@ -149,6 +151,7 @@ export async function callClaude(c: ClaudeCall): Promise<{ toolName: string; inp
   const usage: Usage = { input_tokens: 0, output_tokens: 0, cache_read_input_tokens: 0, cache_creation_input_tokens: 0 };
   let content = c.content;
   let lastProblem: string | null = null;
+  let lastBlock: any = null;
   for (let attempt = 0; attempt < 2; attempt++) {
     const res = await fetch("https://api.anthropic.com/v1/messages", {
       method: "POST",
@@ -183,9 +186,11 @@ export async function callClaude(c: ClaudeCall): Promise<{ toolName: string; inp
     const problem = block ? c.validate?.(block.input) ?? null : `Respond only by calling the ${c.toolName} tool.`;
     if (block && !problem) return { toolName: block.name, input: block.input, usage };
     lastProblem = problem;
+    if (block) lastBlock = block;
     // Ask once more, saying exactly what was wrong.
     content = [...c.content, { type: "text", text: block ? `Your previous ${c.toolName} call was incomplete: ${problem} Call ${c.toolName} again with every field filled.` : problem! }];
   }
+  if (c.acceptPartial && lastBlock) return { toolName: lastBlock.name, input: lastBlock.input, usage, problem: lastProblem };
   throw new HttpError(502, `Claude's ${c.toolName} answer wasn't complete (${lastProblem}). Try again.`);
 }
 

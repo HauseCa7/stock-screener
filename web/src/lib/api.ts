@@ -257,7 +257,7 @@ export async function clearUserValue(companyId: string, key: string) {
 }
 
 export async function draftGroup(companyId: string, group: Group, metricsSummary: string, model?: string) {
-  return invoke<{ ok: boolean; keys: string[] }>("draft-assessments", { company_id: companyId, group, metrics_summary: metricsSummary, model });
+  return invoke<{ ok: boolean; keys: string[]; skipped?: string[] }>("draft-assessments", { company_id: companyId, group, metrics_summary: metricsSummary, model });
 }
 
 // ---------------------------------------------------------------- misc
