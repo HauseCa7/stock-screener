@@ -30,7 +30,7 @@ export async function pdfToPages(file: File, onProgress?: (done: number, total: 
       out += it.str;
       if (y !== undefined) lastY = y;
     }
-    pages.push(out.replace(/[ \t]+/g, " ").replace(/\n{3,}/g, "\n\n").trim());
+    pages.push(cleanText(out).replace(/[ \t]+/g, " ").replace(/\n{3,}/g, "\n\n").trim());
     onProgress?.(i, doc.numPages);
     page.cleanup();
   }
@@ -44,4 +44,15 @@ export function guessKind(filename: string): "annual" | "quarterly" | "transcrip
   if (/10-?q|quarter|\bq[1-4]\b|q[1-4][-_ ]?20\d\d|interim/.test(f)) return "quarterly";
   if (/10-?k|annual|40-?f|20-?f|\bar\b|aif/.test(f)) return "annual";
   return "annual";
+}
+
+/**
+ * Removes characters the database refuses to store in saved text: the null character and other
+ * invisible control codes some PDF makers leave behind, and broken halves of emoji-style
+ * characters. Without this, the upload fails with "unsupported Unicode escape sequence".
+ */
+export function cleanText(s: string): string {
+  return s
+    .replace(/[\u0000-\u0008\u000B\u000C\u000E-\u001F\u007F]/g, " ")
+    .replace(/[\uD800-\uDBFF](?![\uDC00-\uDFFF])|(?<![\uD800-\uDBFF])[\uDC00-\uDFFF]/g, "");
 }
