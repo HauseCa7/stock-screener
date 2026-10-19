@@ -91,3 +91,38 @@ export function DcaPanel({ plan, a, companyId, onSaved, quality }: { plan: DcaPl
     </section>
   );
 }
+
+const ZONE_SHORT: Record<string, string> = {
+  below_bear: "Below bear value",
+  fair: "Fair value or below",
+  full: "Above fair value",
+  rich: "Above bull value",
+  stretched: "Stretched",
+  unpriced: "No valuation yet",
+};
+
+/**
+ * Compact view for the Companies table: the five price zones from cheap (left) to stretched
+ * (right), today's zone filled, and how much of the monthly amount that zone buys.
+ */
+export function DcaGauge({ plan }: { plan: DcaPlan }) {
+  if (plan.zone.id === "unpriced") {
+    return <span className="muted small" title={plan.zone.note}>No valuation yet</span>;
+  }
+  const order: string[] = ["below_bear", "fair", "full", "rich", "stretched"];
+  const at = order.indexOf(plan.zone.id);
+  const fair = plan.zones.find((z) => z.id === "fair")?.upTo ?? null;
+  const vsFair = plan.price !== null && fair ? (plan.price / fair - 1) * 100 : null;
+  const pace = plan.thisMonth !== null ? `${dollars(plan.thisMonth)}/mo` : `${mult(plan.zone.multiplier)} pace`;
+  return (
+    <div className="dcagauge" title={`${plan.zone.label}. ${plan.zone.note}`}>
+      <span className="segs" role="img" aria-label={`Price zone ${at + 1} of 5: ${plan.zone.label}`}>
+        {order.map((z, i) => <i key={z} className={i === at ? `on z${i}` : ""} />)}
+      </span>
+      <span><b>{pace}</b> <span className="muted small">· {ZONE_SHORT[plan.zone.id]}</span></span>
+      {vsFair !== null && (
+        <span className="muted small">{perShare(plan.price)} vs. fair {perShare(fair)} ({vsFair >= 0 ? "+" : ""}{vsFair.toFixed(0)}%)</span>
+      )}
+    </div>
+  );
+}

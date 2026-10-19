@@ -3,6 +3,7 @@ import { useNavigate } from "react-router-dom";
 import { money } from "../engine/format";
 import { createCompany, loadEverything, type Bundle } from "../lib/api";
 import { analyzeBundle, VERDICT_LABEL } from "../lib/analyze";
+import { DcaGauge } from "../components/DcaPanel";
 
 type Filter = "all" | "survivor" | "dca" | "review" | "incomplete" | "off_island";
 
@@ -86,6 +87,7 @@ export default function Companies() {
                 <th>Company</th>
                 <th>Steps</th>
                 <th>Score</th>
+                <th title="Where today's price sits against the valuation, and how much of your monthly DCA amount that zone buys">Price vs. value · DCA</th>
                 <th className="hide-sm">Market cap</th>
                 <th>Verdict</th>
               </tr>
@@ -109,6 +111,7 @@ export default function Companies() {
                       <span className="bar"><span style={{ width: `${(a.score.total / 130) * 100}%` }} /></span>
                     </div>
                   </td>
+                  <td><DcaGauge plan={a.dca} /></td>
                   <td className="hide-sm">{money(m.marketCap)}</td>
                   <td><span className={`verdict ${a.verdict}`}>{VERDICT_LABEL[a.verdict]}</span></td>
                 </tr>

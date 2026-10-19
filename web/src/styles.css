@@ -275,3 +275,13 @@ label.field > input, label.field > select { color: var(--ink); font-size: 15px; 
   .topbar nav a { padding: 6px 6px; }
 }
 @media (prefers-reduced-motion: reduce) { * { transition: none !important; animation: none !important; } }
+
+/* DCA gauge in the Companies table: five zones, cheap (left) to stretched (right). */
+.dcagauge { display: grid; gap: 3px; min-width: 150px; font-size: 14px; }
+.dcagauge .segs { display: inline-flex; gap: 2px; }
+.dcagauge .segs i { width: 22px; height: 6px; border-radius: 2px; background: var(--surface-2); box-shadow: inset 0 0 0 1px var(--line); }
+.dcagauge .segs i.on { box-shadow: none; }
+.dcagauge .segs i.on.z0, .dcagauge .segs i.on.z1 { background: var(--green); }
+.dcagauge .segs i.on.z2 { background: var(--pass); opacity: 0.7; }
+.dcagauge .segs i.on.z3 { background: var(--brass); }
+.dcagauge .segs i.on.z4 { background: var(--fail); }
