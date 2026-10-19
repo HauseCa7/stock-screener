@@ -85,19 +85,29 @@ export function Reports({ company, docs, model, onChanged }: { company: Company;
   const unread = docs.filter((d) => (d.kind === "annual" || d.kind === "quarterly") && (d.extract_status === "pending" || d.extract_status === "error"));
   const [bulk, setBulk] = useState<string | null>(null);
   const readable = docs.filter((d) => d.kind === "annual" || d.kind === "quarterly");
+  // Reads run from this page, three at a time, so a batch of 7 takes under a minute.
+  // Closing or reloading the page stops the ones not yet started.
   async function readAll(list: Doc[]) {
     setErr(null);
     const errors: string[] = [];
-    for (let i = 0; i < list.length; i++) {
-      setBulk(`Reading ${i + 1} of ${list.length}: ${list[i].filename}…`);
-      try {
-        await extractDocument(list[i].id, model);
-      } catch (e: any) {
-        errors.push(`${list[i].filename}: ${e.message}`);
-        if (/API key|workspace|credit|authentication/i.test(e.message)) break; // same error for every file
+    let next = 0, done = 0, stop = false;
+    const label = () => `Reading ${done} of ${list.length} done… Keep this page open until it finishes.`;
+    setBulk(label());
+    const worker = async () => {
+      while (!stop && next < list.length) {
+        const d = list[next++];
+        try {
+          await extractDocument(d.id, model);
+        } catch (e: any) {
+          errors.push(`${d.filename}: ${e.message}`);
+          if (/API key|workspace|credit|authentication/i.test(e.message)) stop = true; // same error for every file
+        }
+        done++;
+        setBulk(label());
+        onChanged();
       }
-      onChanged();
-    }
+    };
+    await Promise.all([worker(), worker(), worker()]);
     setBulk(null);
     if (errors.length) setErr(errors.join(" "));
   }
