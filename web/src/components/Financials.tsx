@@ -2,6 +2,7 @@ import { useMemo, useState } from "react";
 import { Series, toDate, toMs, yearBefore } from "../engine/series";
 import type { FinRow } from "../engine/types";
 import { openPdf, saveFinancial, type Doc } from "../lib/api";
+import { Trends } from "./Trends";
 
 const FLOW: [string, string][] = [
   ["revenue", "Revenue"],
@@ -157,6 +158,7 @@ export function Financials({ companyId, rows, docs, onSaved }: { companyId: stri
         </span>
       </div>
       {err && <div className="notice error">{err}</div>}
+      {cols.length > 0 && <Trends s={s} view={view} />}
       {cols.length === 0 ? (
         <div className="panel muted">No figures yet. Upload reports on the Reports and data tab.</div>
       ) : (

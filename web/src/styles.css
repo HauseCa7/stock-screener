@@ -14,6 +14,8 @@
   --fail-soft: #f7e3df;
   --pending: #8c8f7e;
   --focus: #2f7dd1;
+  /* Chart marks: validated for chroma, lightness and contrast against the surface. */
+  --chart: #1f7f57;
   --serif: "Newsreader", Georgia, serif;
   --sans: "IBM Plex Sans", system-ui, -apple-system, Segoe UI, sans-serif;
   --r-sm: 4px;
@@ -23,6 +25,7 @@
 
 @media (prefers-color-scheme: dark) {
   :root {
+    --chart: #36a372;
     --paper: #0f1513;
     --surface: #161e1b;
     --surface-2: #1d2723;
@@ -285,3 +288,25 @@ label.field > input, label.field > select { color: var(--ink); font-size: 15px; 
 .dcagauge .segs i.on.z2 { background: var(--pass); opacity: 0.7; }
 .dcagauge .segs i.on.z3 { background: var(--brass); }
 .dcagauge .segs i.on.z4 { background: var(--fail); }
+
+/* ---------- trend charts (Financials tab) ---------- */
+.trends { display: grid; grid-template-columns: repeat(auto-fill, minmax(280px, 1fr)); gap: 12px; }
+.trend { margin: 0; padding: 14px 14px 10px; background: var(--surface); border: 1px solid var(--line); border-radius: var(--r-md); display: grid; gap: 6px; align-content: start; }
+.trend figcaption { display: grid; gap: 2px; }
+.trend figcaption .t { font-size: 13px; color: var(--muted); }
+.trend figcaption .v { font-size: 20px; font-weight: 600; }
+/* Two lines reserved so the plots line up across a row of cards. */
+.trend figcaption > .muted { min-height: 2.9em; }
+.trend-plot { position: relative; }
+.trend svg { width: 100%; height: auto; display: block; overflow: visible; }
+.trend .grid { stroke: var(--line); stroke-width: 1; }
+.trend .zero { stroke: var(--muted); stroke-width: 1; }
+.trend .tick { fill: var(--muted); font-size: 10px; font-variant-numeric: tabular-nums; }
+.trend .cap { fill: var(--ink); font-size: 11px; font-weight: 600; }
+.trend .bar { fill: var(--chart); }
+.trend .bar.on { filter: brightness(1.15); }
+.trend rect[tabindex]:focus { outline: none; }
+.trend rect[tabindex]:focus-visible { stroke: var(--focus); stroke-width: 1.5; }
+.trend-tip { position: absolute; top: 0; transform: translate(-50%, -100%); background: var(--ink); color: var(--surface); padding: 5px 8px; border-radius: var(--r-sm); font-size: 12px; display: grid; white-space: nowrap; pointer-events: none; z-index: 2; }
+.trend-tip span { opacity: 0.8; }
+.trend-empty { padding: 30px 0; text-align: center; }
