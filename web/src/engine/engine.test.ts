@@ -219,3 +219,16 @@ describe("DCA plan", () => {
     expect(p.thisMonth).toBe(200);
   });
 });
+
+describe("TTM as the last fiscal-year column", () => {
+  it("is the latest four quarters when quarterly reports are newer than the last annual report", () => {
+    const s = new Series(fixture());
+    expect(s.ttmEnd()).toBe("2026-09-30");
+    // FY2025 + 9 months 2026 − 9 months 2025
+    expect(s.windowSum("revenue", "2026-09-30")! / 1e9).toBeCloseTo(244.140625 + 230 - 180);
+  });
+  it("is absent when the annual report is the latest", () => {
+    const s = new Series(fixture().filter((r) => !r.period_end.startsWith("2026")));
+    expect(s.ttmEnd()).toBeNull();
+  });
+});

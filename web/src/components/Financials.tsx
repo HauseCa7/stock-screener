@@ -44,7 +44,8 @@ interface Cell {
   computed?: boolean;
 }
 
-type View = "annual" | "quarterly" | "ttm";
+type View = "annual" | "quarterly";
+interface Col { end: string; start: string; ttm?: boolean }
 
 export function Financials({ companyId, rows, docs, onSaved }: { companyId: string; rows: FinRow[]; docs: Doc[]; onSaved: () => void }) {
   const [view, setView] = useState<View>("annual");
@@ -55,26 +56,25 @@ export function Financials({ companyId, rows, docs, onSaved }: { companyId: stri
   const byKey = useMemo(() => new Map(rows.map((r) => [`${r.metric}|${r.period_start}|${r.period_end}`, r])), [rows]);
   const docById = useMemo(() => new Map(docs.map((d) => [d.id, d])), [docs]);
 
-  // Columns: fiscal-year ends or quarter ends.
-  const cols = useMemo(() => {
+  // Columns: fiscal-year ends or quarter ends. The fiscal-year view adds one last column, TTM:
+  // the latest four quarters, when quarterly reports are newer than the last annual report.
+  const cols = useMemo<Col[]>(() => {
     const ends = new Map<string, string>(); // end -> start of revenue-like flow
-    const flowPeriods = view === "annual" ? FLOW.flatMap(([m]) => s.annual(m))
-      : view === "ttm" ? FLOW.flatMap(([m]) => [...s.quarters(m), ...s.annual(m)])
-      : FLOW.flatMap(([m]) => s.quarters(m));
+    const flowPeriods = view === "annual" ? FLOW.flatMap(([m]) => s.annual(m)) : FLOW.flatMap(([m]) => s.quarters(m));
     for (const p of flowPeriods) if (!ends.has(p.end)) ends.set(p.end, p.start);
-    let list = [...ends.entries()].sort((a, b) => toMs(a[0]) - toMs(b[0])).map(([end, start]) => ({ end, start }));
-    // A trailing-twelve-month column needs a full year of quarters (or a fiscal year) behind it.
-    if (view === "ttm") list = list.filter((c) => s.windowSum("revenue", c.end) !== null || s.windowSum("operating_cash_flow", c.end) !== null);
-    return list.slice(-8);
+    const list: Col[] = [...ends.entries()].sort((a, b) => toMs(a[0]) - toMs(b[0])).map(([end, start]) => ({ end, start })).slice(view === "annual" ? -7 : -8);
+    const t = view === "annual" ? s.ttmEnd() : null;
+    if (t) list.push({ end: t, start: "", ttm: true });
+    return list;
   }, [s, view]);
 
-  function cellFor(metric: string, col: { end: string; start: string }, isPoint: boolean): Cell {
+  function cellFor(metric: string, col: Col, isPoint: boolean): Cell {
     if (isPoint) {
       const row = byKey.get(`${metric}|${col.end}|${col.end}`);
       const v = s.pointAt(metric, col.end, 10);
       return { metric, start: col.end, end: col.end, value: v, row };
     }
-    if (view === "ttm") {
+    if (col.ttm) {
       // Weighted-average share counts don't add up across quarters; show the latest quarter's instead.
       if (metric === "diluted_shares") {
         const q = s.quarters(metric).find((x) => x.end === col.end);
@@ -137,7 +137,7 @@ export function Financials({ companyId, rows, docs, onSaved }: { companyId: stri
     </tr>
   );
 
-  const fcf = (c: { end: string }) => {
+  const fcf = (c: Col) => {
     const o = cellFor("operating_cash_flow", { ...c, start: "" }, false).value;
     const k = cellFor("capex", { ...c, start: "" }, false).value;
     return o !== null && k !== null ? o - k : null;
@@ -149,12 +149,10 @@ export function Financials({ companyId, rows, docs, onSaved }: { companyId: stri
         <div className="seg" role="group" aria-label="Period">
           <button aria-pressed={view === "annual"} onClick={() => setView("annual")}>Fiscal years</button>
           <button aria-pressed={view === "quarterly"} onClick={() => setView("quarterly")}>Quarters</button>
-          <button aria-pressed={view === "ttm"} onClick={() => setView("ttm")}>Trailing 12 months</button>
         </div>
         <span className="muted small">
-          {view === "ttm"
-            ? "Millions. Each column adds up the four quarters ending that date; this is what the scorecard and pre-screen use. Balance-sheet rows show that date. To correct a number, edit it under Quarters."
-            : <>Millions, in the report's currency. Click any number to correct it. Your numbers are kept when reports are re-read. <i>Italic</i> quarters are worked out from year-to-date columns.</>}
+          Millions, in the report's currency. Click any number to correct it. Your numbers are kept when reports are re-read. <i>Italic</i> quarters are worked out from year-to-date columns.
+          {view === "annual" && cols.some((c) => c.ttm) && " The last column, TTM, adds up the latest four quarters; it moves forward when you upload a new quarterly report. To correct it, edit the quarters."}
         </span>
       </div>
       {err && <div className="notice error">{err}</div>}
@@ -164,8 +162,9 @@ export function Financials({ companyId, rows, docs, onSaved }: { companyId: stri
       ) : (
         <div className="fin-wrap">
           <table className="fin">
+            <colgroup><col />{cols.map((c) => <col key={c.end} className={c.ttm ? "ttm" : undefined} />)}</colgroup>
             <thead>
-              <tr><th>{view === "annual" ? "Fiscal year ending" : view === "ttm" ? "12 months ending" : "Quarter ending"}</th>{cols.map((c) => <th key={c.end}>{c.end}</th>)}</tr>
+              <tr><th>{view === "annual" ? "Fiscal year ending" : "Quarter ending"}</th>{cols.map((c) => <th key={c.end} className={c.ttm ? "ttm" : undefined}>{c.ttm ? <>TTM<div className="muted small" style={{ fontWeight: 400 }}>to {c.end}</div></> : c.end}</th>)}</tr>
             </thead>
             <tbody>
               {FLOW.map((f) => renderRow(f, false))}
@@ -173,7 +172,7 @@ export function Financials({ companyId, rows, docs, onSaved }: { companyId: stri
               {view !== "quarterly" && (
                 <tr className="sub"><td>Revenue growth vs. a year earlier</td>{cols.map((c) => {
                   const now = cellFor("revenue", { ...c, start: "" }, false).value;
-                  const prior = view === "ttm" ? s.windowSum("revenue", yearBefore(c.end)) : s.annual("revenue").find((x) => Math.abs(toMs(x.end) - toMs(yearBefore(c.end))) <= 10 * 86_400_000)?.value ?? null;
+                  const prior = c.ttm ? s.windowSum("revenue", yearBefore(c.end)) : s.annual("revenue").find((x) => Math.abs(toMs(x.end) - toMs(yearBefore(c.end))) <= 10 * 86_400_000)?.value ?? null;
                   return <td key={c.end}>{now !== null && prior ? `${(((now - prior) / Math.abs(prior)) * 100).toFixed(1)}%` : ""}</td>;
                 })}</tr>
               )}

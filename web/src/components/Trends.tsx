@@ -1,13 +1,14 @@
 // Bar charts of the key financial criteria over time: is the business getting better?
 // One small chart per measure (never two scales on one chart), same periods across all of them,
-// following the Financials tab's Fiscal years / Quarters / Trailing 12 months switch.
+// following the Financials tab's Fiscal years / Quarters switch. The fiscal-year view ends with
+// one extra "TTM" bar: the latest four quarters, so the newest numbers sit next to the history.
 import { useMemo, useState } from "react";
 import { money } from "../engine/format";
 import { near, Series, yearBefore } from "../engine/series";
 
-export type TrendView = "annual" | "quarterly" | "ttm";
+export type TrendView = "annual" | "quarterly";
 
-interface Point { end: string; label: string; value: number | null }
+interface Point { end: string; label: string; value: number | null; ttm?: boolean }
 interface Measure { id: string; title: string; unit: "money" | "pct"; points: Point[]; better: "up" | "down"; note?: string }
 
 const MONTHS = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
@@ -18,45 +19,49 @@ function fmt(v: number | null, unit: Measure["unit"]): string {
   return unit === "pct" ? `${v.toFixed(1)}%` : money(v);
 }
 
+interface Slot { end: string; label: string; ttm?: boolean }
+
 /** Every measure's value at each period end, for the chosen view. */
 export function buildMeasures(s: Series, view: TrendView): Measure[] {
-  const flowAt = (metric: string, end: string): number | null => {
-    if (view === "annual") return s.annual(metric).find((p) => near(p.end, end, 10))?.value ?? null;
-    if (view === "quarterly") return s.quarters(metric).find((p) => near(p.end, end, 10))?.value ?? null;
-    return s.windowSum(metric, end);
-  };
-  const base = view === "annual" ? s.annual("revenue") : s.quarters("revenue");
-  let ends = base.map((p) => p.end);
-  if (view === "ttm") {
-    const all = [...s.quarters("revenue"), ...s.annual("revenue")].map((p) => p.end);
-    ends = [...new Set(all)].sort().filter((e) => s.windowSum("revenue", e) !== null);
+  let slots: Slot[];
+  if (view === "annual") {
+    slots = s.annual("revenue").slice(-6).map((p) => ({ end: p.end, label: `FY${p.end.slice(2, 4)}` }));
+    const t = s.ttmEnd();
+    if (t) slots.push({ end: t, label: "TTM", ttm: true });
+  } else {
+    slots = s.quarters("revenue").slice(-8).map((p) => ({ end: p.end, label: shortDate(p.end) }));
   }
-  ends = [...new Set(ends)].sort().slice(view === "annual" ? -6 : -8);
-  const label = (e: string) => (view === "annual" ? `FY${e.slice(2, 4)}` : shortDate(e));
 
+  // A flow measure for a slot, or for the same-length period a year before it (for growth).
+  const flowAt = (metric: string, slot: Slot, yearAgo = false): number | null => {
+    const end = yearAgo ? yearBefore(slot.end) : slot.end;
+    if (slot.ttm) return s.windowSum(metric, end);
+    if (view === "annual") return s.annual(metric).find((p) => near(p.end, end, 10))?.value ?? null;
+    return s.quarters(metric).find((p) => near(p.end, end, 10))?.value ?? null;
+  };
   const div = (a: number | null, b: number | null) => (a !== null && b ? (a / b) * 100 : null);
-  const rev = (e: string) => flowAt("revenue", e);
-  const fcf = (e: string) => {
-    const o = flowAt("operating_cash_flow", e), k = flowAt("capex", e);
+  const rev = (x: Slot) => flowAt("revenue", x);
+  const fcf = (x: Slot) => {
+    const o = flowAt("operating_cash_flow", x), k = flowAt("capex", x);
     return o !== null && k !== null ? o - k : null;
   };
-  const growth = (e: string) => {
-    const now = rev(e), prior = rev(yearBefore(e));
+  const growth = (x: Slot) => {
+    const now = rev(x), prior = flowAt("revenue", x, true);
     return now !== null && prior ? ((now - prior) / Math.abs(prior)) * 100 : null;
   };
-  const netCash = (e: string) => {
-    const c = s.pointAt("cash_and_st_investments", e, 10), d = s.pointAt("total_debt", e, 10);
+  const netCash = (x: Slot) => {
+    const c = s.pointAt("cash_and_st_investments", x.end, 10), d = s.pointAt("total_debt", x.end, 10);
     return c !== null && d !== null ? c - d : null;
   };
-  const pts = (f: (e: string) => number | null) => ends.map((e) => ({ end: e, label: label(e), value: f(e) }));
-  const span = view === "annual" ? "fiscal year" : view === "quarterly" ? "quarter" : "12 months";
+  const pts = (f: (x: Slot) => number | null): Point[] => slots.map((x) => ({ ...x, value: f(x) }));
+  const span = view === "annual" ? "fiscal year (TTM: the latest four quarters)" : "quarter";
 
   return [
     { id: "revenue", title: "Revenue", unit: "money", better: "up", points: pts(rev) },
     { id: "growth", title: "Revenue growth vs. a year earlier", unit: "pct", better: "up", points: pts(growth) },
-    { id: "op_margin", title: "Operating margin", unit: "pct", better: "up", points: pts((e) => div(flowAt("operating_income", e), rev(e))) },
+    { id: "op_margin", title: "Operating margin", unit: "pct", better: "up", points: pts((x) => div(flowAt("operating_income", x), rev(x))) },
     { id: "fcf", title: "Free cash flow", unit: "money", better: "up", points: pts(fcf), note: `Operating cash flow minus capex, per ${span}` },
-    { id: "fcf_margin", title: "Free cash flow margin", unit: "pct", better: "up", points: pts((e) => div(fcf(e), rev(e))) },
+    { id: "fcf_margin", title: "Free cash flow margin", unit: "pct", better: "up", points: pts((x) => div(fcf(x), rev(x))) },
     { id: "net_cash", title: "Cash minus debt", unit: "money", better: "up", points: pts(netCash), note: "At each period end" },
   ];
 }
@@ -93,7 +98,7 @@ function change(m: Measure, view: TrendView): string | null {
   const v = m.points.filter((p) => p.value !== null);
   if (v.length < 2) return null;
   const last = v[v.length - 1], prev = v[v.length - 2];
-  const prevName = view === "annual" ? prev.label : view === "quarterly" ? `the ${prev.label} quarter` : `12 months to ${prev.label}`;
+  const prevName = view === "annual" ? prev.label : `the ${prev.label} quarter`;
   const d = last.value! - prev.value!;
   if (m.unit === "pct") return `${d >= 0 ? "Up" : "Down"} ${Math.abs(d).toFixed(1)} pts vs. ${prevName}`;
   if (prev.value! > 0 && last.value! > 0) {
@@ -153,7 +158,7 @@ function BarChart({ m, view }: { m: Measure; view: TrendView }) {
             const cx = L + band * i + band / 2;
             return (
               <g key={p.end}>
-                {p.value !== null && <path d={column(cx - bw / 2, bw, y(0), y(p.value))} className={`bar ${hover === i ? "on" : ""}`} />}
+                {p.value !== null && <path d={column(cx - bw / 2, bw, y(0), y(p.value))} className={`bar ${p.ttm ? "ttm" : ""} ${hover === i ? "on" : ""}`} />}
                 {p.value === null && <text x={cx} y={y(0) - 4} textAnchor="middle" className="tick">n/a</text>}
                 <text x={cx} y={H - 6} textAnchor="middle" className="tick">{p.label}</text>
                 {/* Hit target: the whole band, taller and wider than the bar. */}
@@ -172,7 +177,7 @@ function BarChart({ m, view }: { m: Measure; view: TrendView }) {
         {hv && (
           <div className="trend-tip" style={{ left: `${((L + band * hover! + band / 2) / W) * 100}%` }}>
             <b>{fmt(hv.value, m.unit)}</b>
-            <span>{view === "annual" ? `Fiscal year to ${hv.end}` : view === "quarterly" ? `Quarter to ${hv.end}` : `12 months to ${hv.end}`}</span>
+            <span>{hv.ttm ? `Last 12 months to ${hv.end}` : view === "annual" ? `Fiscal year to ${hv.end}` : `Quarter to ${hv.end}`}</span>
           </div>
         )}
       </div>

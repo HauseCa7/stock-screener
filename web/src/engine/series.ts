@@ -211,6 +211,18 @@ export class Series {
     return a.length >= 3 ? { kind: "annual", end: a[a.length - 2].end } : null;
   }
 
+  /**
+   * End date of the latest trailing-twelve-month figure, when it's newer than the last fiscal
+   * year (i.e. quarterly reports exist after the last annual report). Null otherwise.
+   */
+  ttmEnd(metric = "revenue"): string | null {
+    const l = this.ltm(metric);
+    const lastFy = this.annual(metric).at(-1);
+    if (!l) return null;
+    if (lastFy && toMs(l.end) <= toMs(lastFy.end) + 10 * DAY) return null;
+    return l.end;
+  }
+
   hasAny(): boolean {
     return this.flows.size + this.points.size > 0;
   }
