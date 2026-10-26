@@ -29,6 +29,24 @@ function skippedNote(keys: string[]): string {
   return `Claude's draft was saved, but ${keys.length === 1 ? "one answer" : `${keys.length} answers`} (${keys.join(", ")}) came back unusable and ${keys.length === 1 ? "was" : "were"} left blank in ${steps.join(", ")}. Fill ${keys.length === 1 ? "it" : "them"} in yourself or click Draft again.`;
 }
 
+/**
+ * The "last 12 months" figures need a full year behind the newest report. When an annual report
+ * is missing, they quietly fall back to an older period; say so, and say which report fixes it.
+ */
+function staleLtm(docs: { kind: string; period_end: string | null; extract_status: string }[], ltmEnd: string | null, lastFyEnd: string | null): string | null {
+  const newest = docs.filter((d) => (d.kind === "annual" || d.kind === "quarterly") && d.extract_status === "done" && d.period_end).map((d) => d.period_end!).sort().at(-1);
+  if (!newest) return null;
+  const day = 86_400_000;
+  if (ltmEnd && (Date.parse(newest) - Date.parse(ltmEnd)) / day < 100) return null;
+  const nextFy = lastFyEnd ? `${Number(lastFyEnd.slice(0, 4)) + 1}${lastFyEnd.slice(4)}` : null;
+  const need = nextFy && Date.parse(nextFy) <= Date.parse(newest) + 10 * day
+    ? `the annual report for the fiscal year ending ${nextFy}`
+    : "the annual report that comes before your newest quarterly report";
+  return ltmEnd
+    ? `The "last 12 months" figures (revenue, margins, free cash flow, growth) run to ${ltmEnd}, but your newest report runs to ${newest}. They can't be brought up to date without ${need}. Upload it to score this company on current numbers.`
+    : `There isn't a full 12 months of figures yet. Upload ${need}.`;
+}
+
 export default function CompanyPage() {
   const { id } = useParams();
   const nav = useNavigate();
@@ -71,6 +89,7 @@ export default function CompanyPage() {
   const c = b.company;
   const step = an.steps[sel - 1];
   const missingMarket = missingFields(b.market, m.shares);
+  const stale = staleLtm(b.docs, m.ltmEnd, m.annual.at(-1)?.end ?? null);
 
   async function draftOne(group: string) {
     setDrafting(group);
@@ -159,6 +178,12 @@ export default function CompanyPage() {
             {missingMarket.length} number{missingMarket.length > 1 ? "s" : ""} from Yahoo Finance {missingMarket.length > 1 ? "are" : "is"} needed to finish the analysis: {missingMarket.map((f) => f.label.toLowerCase()).join(", ")}.
           </span>
           <Link className="btn sm primary" to={`/c/${c.id}/inputs`}>Fill them in</Link>
+        </div>
+      )}
+      {!progress && stale && (
+        <div className="notice row" style={{ marginBottom: 12 }}>
+          <span style={{ flex: 1 }}>{stale}</span>
+          <button className="btn sm" onClick={() => setTab("data")}>Upload reports</button>
         </div>
       )}
       {err && <div className="notice error" style={{ marginBottom: 12 }}>{err}</div>}
