@@ -160,7 +160,7 @@ Periods:
 - shares_outstanding comes from the cover page; its period is the date stated there (start = "").
 
 Metric definitions (report values as printed, give the multiplier: 'in thousands' = 1000, 'in millions' = 1000000; share counts can have a different scale than dollars; diluted_eps and ndr_pct use multiplier 1):
-- revenue: total revenue / net sales.
+- revenue: total revenue / net sales. If the company reports discontinued operations, use the continuing-operations figures for revenue and operating income (the statement's restated columns).
 - operating_income: income (loss) from operations / operating profit. If no such line is printed but the statement shows total revenues and total operating expenses (common at brokers and fintechs), use total revenues minus total operating expenses and say so in warnings. Omit only if neither is available (e.g., banks).
 - net_income: net income attributable to the company's shareholders.
 - interest_expense: gross interest expense as a positive number. Omit if only a combined 'interest and other, net' line exists.
@@ -222,12 +222,22 @@ Deno.serve(handler(async (req) => {
     for (const p of r.periods ?? []) periods.set(p.id, { start: p.start || null, end: p.end });
 
     // Keep user-entered values: never overwrite rows with origin 'user'.
-    const { data: userRows } = await ctx.db
-      .from("financials")
-      .select("metric, period_start, period_end")
-      .eq("company_id", doc.company_id)
-      .eq("origin", "user");
-    const locked = new Set((userRows ?? []).map((x) => `${x.metric}|${x.period_start}|${x.period_end}`));
+    // And keep figures from NEWER reports: companies restate past periods (discontinued
+    // operations, accounting changes), so when the same period appears in several reports, the
+    // most recent report's number is the one to trust, whatever order the reports are read in.
+    const thisEnd: string | null = /^\d{4}-\d{2}-\d{2}$/.test(r.fiscal_period_end ?? "") ? r.fiscal_period_end : null;
+    const [{ data: existing }, { data: siblings }] = await Promise.all([
+      ctx.db.from("financials").select("metric, period_start, period_end, origin, source_doc_id").eq("company_id", doc.company_id),
+      ctx.db.from("documents").select("id, period_end").eq("company_id", doc.company_id),
+    ]);
+    const docEnd = new Map((siblings ?? []).map((d) => [d.id, d.period_end as string | null]));
+    const locked = new Set<string>();
+    for (const x of existing ?? []) {
+      const k = `${x.metric}|${x.period_start}|${x.period_end}`;
+      if (x.origin === "user") { locked.add(k); continue; }
+      const otherEnd = x.source_doc_id && x.source_doc_id !== doc.id ? docEnd.get(x.source_doc_id) : null;
+      if (otherEnd && thisEnd && otherEnd > thisEnd) locked.add(k); // a newer report already gave this figure
+    }
 
     const rows: Record<string, unknown>[] = [];
     const seen = new Set<string>();
