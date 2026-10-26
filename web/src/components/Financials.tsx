@@ -40,6 +40,8 @@ interface Cell {
   value: number | null;
   row?: FinRow;
   derived?: boolean;
+  /** Capex not shown separately in the report, counted as 0. */
+  assumed?: boolean;
   /** Trailing-twelve-month sums are calculated, so they can't be edited directly. */
   computed?: boolean;
 }
@@ -85,7 +87,7 @@ export function Financials({ companyId, rows, docs, onSaved }: { companyId: stri
     const series = view === "annual" ? s.annual(metric) : s.quarters(metric);
     const p = series.find((x) => x.end === col.end);
     const start = p?.start ?? col.start;
-    return { metric, start, end: col.end, value: p?.value ?? null, row: byKey.get(`${metric}|${start}|${col.end}`), derived: p?.derived };
+    return { metric, start, end: col.end, value: p?.value ?? null, row: byKey.get(`${metric}|${start}|${col.end}`), derived: p?.derived, assumed: p?.assumed };
   }
 
   async function commit() {
@@ -111,6 +113,7 @@ export function Financials({ companyId, rows, docs, onSaved }: { companyId: stri
         const doc = cell.row?.source_doc_id ? docById.get(cell.row.source_doc_id) : undefined;
         const title = cell.computed
           ? (m === "diluted_shares" ? "Latest quarter's weighted-average diluted shares" : `Sum of the four quarters ending ${c.end}. Edit the quarters to change it.`)
+          : cell.assumed ? "The report has no separate capex line (it's inside 'other investing activities'), so it's counted as 0. Click to enter a figure."
           : cell.row?.origin === "user" ? "Entered by you" : cell.derived ? "Derived from year-to-date figures" : doc ? `From ${doc.fiscal_label ?? doc.filename}${cell.row?.source_page ? `, page ${cell.row.source_page}` : ""}` : "";
         if (editing) {
           return (
@@ -127,7 +130,7 @@ export function Financials({ companyId, rows, docs, onSaved }: { companyId: stri
           cell.computed ? (
             <td key={c.end} title={title}>{show(m, cell.value)}</td>
           ) : (
-            <td key={c.end} className={`cell ${cell.row?.origin === "user" ? "user" : ""} ${cell.derived ? "derived" : ""}`} title={title}
+            <td key={c.end} className={`cell ${cell.row?.origin === "user" ? "user" : ""} ${cell.derived || cell.assumed ? "derived" : ""}`} title={title}
               onClick={() => { setEdit(cell); setDraft(cell.value === null ? "" : String(cell.value / scale(m))); }}>
               {show(m, cell.value)}
             </td>

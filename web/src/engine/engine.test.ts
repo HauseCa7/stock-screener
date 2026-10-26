@@ -232,3 +232,18 @@ describe("TTM as the last fiscal-year column", () => {
     expect(s.ttmEnd()).toBeNull();
   });
 });
+
+describe("capex not shown separately", () => {
+  const f = (metric: string, s: string, e: string, v: number): FinRow => ({ metric, period_start: s, period_end: e, value: v, origin: "ai" });
+  it("counts as 0 when the cash flow statement was read, and is marked as assumed", () => {
+    const s = new Series([f("operating_cash_flow", "2025-01-01", "2025-12-31", 100), f("capex", "2024-01-01", "2024-12-31", 5), f("operating_cash_flow", "2024-01-01", "2024-12-31", 80)]);
+    const fy25 = s.annual("capex").find((p) => p.end === "2025-12-31")!;
+    expect(fy25.value).toBe(0);
+    expect(fy25.assumed).toBe(true);
+    expect(s.annual("capex").find((p) => p.end === "2024-12-31")).toMatchObject({ value: 5 });
+  });
+  it("is not invented when there's no cash flow statement for the period", () => {
+    const s = new Series([f("revenue", "2025-01-01", "2025-12-31", 100)]);
+    expect(s.annual("capex")).toHaveLength(0);
+  });
+});

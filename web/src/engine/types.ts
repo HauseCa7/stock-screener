@@ -9,6 +9,8 @@ export interface FinRow {
   origin: "ai" | "user";
   source_doc_id?: string | null;
   source_page?: number | null;
+  /** Filled in by the engine, not read from a report: capex counted as 0 (see Series). */
+  assumed?: boolean;
 }
 
 export interface Market {

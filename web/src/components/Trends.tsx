@@ -55,12 +55,15 @@ export function buildMeasures(s: Series, view: TrendView): Measure[] {
   };
   const pts = (f: (x: Slot) => number | null): Point[] => slots.map((x) => ({ ...x, value: f(x) }));
   const span = view === "annual" ? "fiscal year (TTM: the latest four quarters)" : "quarter";
+  const capexAssumed = slots.some((x) => !x.ttm && (view === "annual" ? s.annual("capex") : s.quarters("capex")).some((p) => p.assumed && near(p.end, x.end, 10)))
+    || (slots.some((x) => x.ttm) && s.quarters("capex").slice(-4).some((p) => p.assumed));
+  const fcfNote = `Operating cash flow minus capex, per ${span}.${capexAssumed ? " Some reports show no separate capex line, so it's counted as 0 there." : ""}`;
 
   return [
     { id: "revenue", title: "Revenue", unit: "money", better: "up", points: pts(rev) },
     { id: "growth", title: "Revenue growth vs. a year earlier", unit: "pct", better: "up", points: pts(growth) },
     { id: "op_margin", title: "Operating margin", unit: "pct", better: "up", points: pts((x) => div(flowAt("operating_income", x), rev(x))) },
-    { id: "fcf", title: "Free cash flow", unit: "money", better: "up", points: pts(fcf), note: `Operating cash flow minus capex, per ${span}` },
+    { id: "fcf", title: "Free cash flow", unit: "money", better: "up", points: pts(fcf), note: fcfNote },
     { id: "fcf_margin", title: "Free cash flow margin", unit: "pct", better: "up", points: pts((x) => div(fcf(x), rev(x))) },
     { id: "net_cash", title: "Cash minus debt", unit: "money", better: "up", points: pts(netCash), note: "At each period end" },
   ];

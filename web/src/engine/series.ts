@@ -22,6 +22,8 @@ export interface Period {
   end: string;
   value: number;
   derived?: boolean;
+  /** Capex the report doesn't show separately, counted as 0. */
+  assumed?: boolean;
 }
 
 export class Series {
@@ -37,6 +39,18 @@ export class Series {
       if (!map.has(r.metric)) map.set(r.metric, []);
       map.get(r.metric)!.push(row);
     }
+    // Some companies (asset-light software, ad tech) have no "purchases of property and equipment"
+    // line at all; it's folded into "other investing activities". When a period's cash flow
+    // statement was read (operating cash flow is there) but capex isn't, count capex as 0 so free
+    // cash flow can still be worked out. It's marked as assumed and shown that way.
+    const capex = this.flows.get("capex") ?? [];
+    const have = new Set(capex.map((r) => `${r.period_start}|${r.period_end}`));
+    for (const r of this.flows.get("operating_cash_flow") ?? []) {
+      if (!r.period_start || have.has(`${r.period_start}|${r.period_end}`)) continue;
+      capex.push({ metric: "capex", period_start: r.period_start, period_end: r.period_end, value: 0, origin: "ai", assumed: true });
+      have.add(`${r.period_start}|${r.period_end}`);
+    }
+    if (capex.length) this.flows.set("capex", capex);
   }
 
   private flowRows(metric: string): FinRow[] {
@@ -73,7 +87,7 @@ export class Series {
       // 52/53-week years drift a few days, so allow a week either side of the usual start.
       if (fy && Math.abs(toMs(`2000-${r.period_start!.slice(5)}`) - toMs(`2000-${fy}`)) > 7 * DAY) continue;
       const prev = byEnd.get(r.period_end);
-      if (!prev || r.origin === "user") byEnd.set(r.period_end, { start: r.period_start!, end: r.period_end, value: r.value! });
+      if (!prev || r.origin === "user" || (prev.assumed && !r.assumed)) byEnd.set(r.period_end, { start: r.period_start!, end: r.period_end, value: r.value!, assumed: r.assumed });
     }
     return [...byEnd.values()].sort((a, b) => toMs(a.end) - toMs(b.end));
   }
@@ -84,7 +98,8 @@ export class Series {
     const byEnd = new Map<string, Period>();
     for (const r of rows) {
       if (isQuarter(durationDays(r.period_start!, r.period_end))) {
-        byEnd.set(r.period_end, { start: r.period_start!, end: r.period_end, value: r.value! });
+        const prev = byEnd.get(r.period_end);
+        if (!prev || !r.assumed || prev.assumed) byEnd.set(r.period_end, { start: r.period_start!, end: r.period_end, value: r.value!, assumed: r.assumed });
       }
     }
     // Year-to-date chains share a start date: Q2 = H1 − Q1, Q4 = FY − 9M, ...
@@ -100,7 +115,7 @@ export class Series {
         const start = toDate(toMs(a.period_end) + DAY);
         if (!isQuarter(durationDays(start, b.period_end))) continue;
         if (!byEnd.has(b.period_end)) {
-          byEnd.set(b.period_end, { start, end: b.period_end, value: b.value! - a.value!, derived: true });
+          byEnd.set(b.period_end, { start, end: b.period_end, value: b.value! - a.value!, derived: true, assumed: a.assumed && b.assumed });
         }
       }
     }
