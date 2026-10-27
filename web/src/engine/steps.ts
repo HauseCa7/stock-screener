@@ -45,6 +45,31 @@ function resolve(n: number, title: string, checks: Check[], a: AssessmentMap): S
   return { n, title, checks, computedStatus, overridden, status: overridden ? overridden.status : computedStatus };
 }
 
+// ---------------------------------------------------------------- debt the business can carry
+
+/**
+ * The guide wants more cash than debt. A company that borrows to buy back stock (AppLovin) or to
+ * fund a deal can owe more than it holds and still be in no danger, so debt also passes when
+ * the free cash flow could repay the net debt within two years (strong companies typically
+ * carry net debt under 2–3x their yearly cash earnings) AND operating income covers
+ * interest at least 10 times (the top of the guide's 4–10x loan-officer range).
+ */
+export const CARRY_YEARS = 2;
+export const CARRY_COVERAGE = 10;
+
+export function debtCarried(cash: number | null, debt: number | null, fcf: number | null, coverage: number | null): { ok: boolean | null; text?: string; covered?: boolean } {
+  if (cash === null || debt === null) return { ok: null };
+  if (cash >= debt) return { ok: true, text: `${money(cash)} cash vs. ${money(debt)} debt` };
+  const net = debt - cash;
+  // Without free cash flow there's no way to show the debt is carried, so the guide's strict rule applies.
+  if (fcf === null) return { ok: false, text: `Net debt ${money(net)}; no free cash flow figure to show it's covered` };
+  const years = fcf > 0 ? net / fcf : Infinity;
+  const yrsText = fcf > 0 ? `${years < 0.1 ? "<0.1" : years.toFixed(1)} years of FCF` : "free cash flow negative";
+  const covText = coverage === null ? "interest coverage unknown" : coverage === Infinity ? "no interest" : `interest covered ${coverage.toFixed(0)}x`;
+  const ok = years <= CARRY_YEARS && (coverage === null || coverage >= CARRY_COVERAGE);
+  return { ok, covered: ok, text: `Net debt ${money(net)} = ${yrsText}; ${covText}` };
+}
+
 // ---------------------------------------------------------------- scorecard
 
 export interface ScoreItem {
@@ -60,7 +85,7 @@ export interface ScoreItem {
 }
 
 export const SCORE_DEFS: { id: string; label: string; subjective: boolean; bands: [string, string, string] }[] = [
-  { id: "cash_debt", label: "Cash vs. debt", subjective: false, bands: ["More debt than cash", "More cash than debt", "2x+ cash vs. debt"] },
+  { id: "cash_debt", label: "Cash vs. debt", subjective: false, bands: ["More debt than cash", "More cash than debt, or net debt repaid by ≤2 years of FCF", "2x+ cash vs. debt"] },
   { id: "revenue_growth", label: "Revenue growth", subjective: false, bands: ["Below 10%", "10 to 20%", "Above 20%"] },
   { id: "operating_margin", label: "Operating margin", subjective: false, bands: ["Below 10%", "10 to 25%", "Above 25%"] },
   { id: "short_interest", label: "Short interest", subjective: false, bands: ["Above 10%", "5 to 10%", "Below 5%"] },
@@ -79,8 +104,9 @@ function computedScore(id: string, m: Metrics, mk: Market | null): { points: num
   switch (id) {
     case "cash_debt": {
       if (m.cash === null || m.debt === null) return { points: null, basis: "Needs cash and debt" };
-      const p = m.debt === 0 ? (m.cash > 0 ? 10 : 5) : m.cash >= 2 * m.debt ? 10 : m.cash > m.debt ? 5 : 0;
-      return { points: p, basis: `Cash ${money(m.cash)} vs. debt ${money(m.debt)}` };
+      const carried = debtCarried(m.cash, m.debt, m.fcfLtm, m.interestCoverage);
+      const p = m.debt === 0 ? (m.cash > 0 ? 10 : 5) : m.cash >= 2 * m.debt ? 10 : m.cash > m.debt ? 5 : carried.covered ? 5 : 0;
+      return { points: p, basis: m.cash >= m.debt ? `Cash ${money(m.cash)} vs. debt ${money(m.debt)}` : carried.text ?? "" };
     }
     case "revenue_growth": {
       const g = m.revGrowthPct;
@@ -207,11 +233,12 @@ export function analyze(m: Metrics, mk: Market | null, a: AssessmentMap, now = n
     const g = m.annual.map((r) => r.revGrowthPct).filter((x): x is number => x !== null).slice(-3);
     const grew = g.length >= 2 ? g.every((x) => x > 0) : null;
     const prof = m.opIncomeLtm === null ? null : m.opIncomeLtm > 0;
-    const cashDebt = m.cash === null || m.debt === null ? null : m.cash > m.debt;
+    const carry = debtCarried(m.cash, m.debt, m.fcfLtm, m.interestCoverage);
+    const cashDebt = carry.ok;
     const checks: Check[] = [
       check("Revenue has grown for the past few years", grew, { value: g.length ? g.map((x) => pct(x, 0)).join(", ") : undefined, source: "computed", info: true }),
       check("The company is profitable (operating income, LTM)", prof, { value: money(m.opIncomeLtm), source: "computed", info: true }),
-      check("More cash than debt", cashDebt, { value: m.cash !== null ? `${money(m.cash)} vs. ${money(m.debt)}` : undefined, source: "computed", info: true }),
+      check("More cash than debt, or debt the cash flow easily carries", cashDebt, { value: carry.text, source: "computed", info: true }),
     ];
     const passes = [grew, prof, cashDebt].filter((x) => x === true).length;
     const fails = [grew, prof, cashDebt].filter((x) => x === false).length;
@@ -232,6 +259,9 @@ export function analyze(m: Metrics, mk: Market | null, a: AssessmentMap, now = n
   {
     const qf = m.quarterlyFcf.slice(-6);
     const qn = m.quarterlyNetCash.slice(-6);
+    // Each quarter is judged against the free cash flow of the 12 months to that date.
+    const quarterOk = (x: { value: number; fcfLtm: number | null }) => x.value > 0 || debtCarried(0, -x.value, x.fcfLtm, m.interestCoverage).ok === true;
+    const carryNow = debtCarried(m.cash, m.debt, m.fcfLtm, m.interestCoverage);
     const moat = scoreOf("moat");
     const c01 = eff(a, "step10.checklist")?.c01_track_record;
     const legal = eff(a, "step3.legal_overhang");
@@ -242,7 +272,11 @@ export function analyze(m: Metrics, mk: Market | null, a: AssessmentMap, now = n
     const misses = mk?.earnings_misses_last4 ?? null;
     const checks: Check[] = [
       check("Positive free cash flow, last 4–6 quarters", qf.length >= 4 ? qf.every((x) => x.value > 0) : null, { value: qf.length ? `${qf.filter((x) => x.value > 0).length} of ${qf.length} positive` : "Upload quarterly reports", source: "computed" }),
-      check("Net cash positive, last 4–6 quarters", qn.length >= 4 ? qn.every((x) => x.value > 0) : null, { value: qn.length ? `${qn.filter((x) => x.value > 0).length} of ${qn.length} positive` : "Upload quarterly reports", source: "computed" }),
+      check("Net cash positive (or debt easily carried), last 4–6 quarters", qn.length >= 4 ? qn.every(quarterOk) : null, {
+        value: qn.length ? `${qn.filter((x) => x.value > 0).length} of ${qn.length} net-cash positive${qn.some((x) => x.value <= 0) && qn.every(quarterOk) ? "; the rest carried by free cash flow" : ""}` : "Upload quarterly reports",
+        detail: `Net debt passes when ${CARRY_YEARS} years of free cash flow (to that quarter) repay it and interest is covered ${CARRY_COVERAGE}x or more.`,
+        source: "computed",
+      }),
       check("Revenue growing 10% or more", m.revGrowthPct === null ? null : m.revGrowthPct >= 10, { value: pct(m.revGrowthPct), source: "computed" }),
       check("An actual moat", moat === null ? null : moat >= 5, { value: moat === null ? undefined : `${moat}/10 on scorecard`, source: sourceOf(a, "score.moat") ?? undefined }),
       check("A CEO and team with a track record", c01 === undefined || c01 === "unknown" ? null : c01 === "yes", { value: c01, source: sourceOf(a, "step10.checklist") ?? undefined }),
@@ -257,7 +291,11 @@ export function analyze(m: Metrics, mk: Market | null, a: AssessmentMap, now = n
       // Instant kills
       check("Market cap at least $1 billion", mc === null ? null : mc >= 1e9, { value: money(mc), kill: true, source: "market" }),
       check("Short interest at or below 10%", si === null ? null : si <= 10, { value: pct(si), kill: true, source: "market" }),
-      check("No more debt than cash, not even by a dollar", m.cash === null || m.debt === null ? null : m.debt <= m.cash, { value: `${money(m.cash)} vs. ${money(m.debt)}`, kill: true, source: "computed" }),
+      check(`No more debt than cash, unless ${CARRY_YEARS} years of free cash flow repay it`, carryNow.ok, {
+        value: carryNow.text,
+        detail: `The guide's rule is "not even by a dollar". Net debt is allowed here when free cash flow repays it within ${CARRY_YEARS} years and interest is covered ${CARRY_COVERAGE}x or more, e.g. debt taken on to buy back shares.`,
+        kill: true, source: "computed",
+      }),
       check("Operating margin at least 20%", m.opMarginPct === null ? null : m.opMarginPct >= 20, { value: pct(m.opMarginPct), kill: true, source: "computed" }),
       check("Not: revenue growth below 10% and falling", falling === null ? null : !falling, { value: m.revGrowthPrevPct !== null ? `${pct(m.revGrowthPct)} (prior year ${pct(m.revGrowthPrevPct)})` : pct(m.revGrowthPct), kill: true, source: "computed" }),
       check("Fewer than 2 earnings misses in the last 4 quarters", misses === null ? null : misses < 2, { value: misses === null ? undefined : `${misses} misses`, kill: true, source: "market" }),
@@ -311,14 +349,16 @@ export function analyze(m: Metrics, mk: Market | null, a: AssessmentMap, now = n
     const fcf = yrs.map((r) => r.fcf);
     const fcfOk = enough && fcf.every((x) => x !== null) ? fcf.every((x) => x! > 0) && fcf[fcf.length - 1]! > fcf[0]! : null;
     const cd = yrs.filter((r) => r.cash !== null && r.debt !== null);
-    const cdOk = cd.length >= 3 ? cd.every((r) => r.cash! > r.debt!) : null;
+    const yearOk = (r: { cash: number | null; debt: number | null; fcf: number | null }) => r.cash! > r.debt! || debtCarried(r.cash, r.debt, r.fcf, m.interestCoverage).ok === true;
+    const cdOk = cd.length >= 3 ? cd.every(yearOk) : null;
+    const carriedYears = cd.filter((r) => r.cash! <= r.debt! && yearOk(r)).length;
     const span = yrs.length ? `${yrs.length} years` : "no annual data";
     const checks: Check[] = [
       aiCheck(a, "step7.revenue_engine", "Understand how the money gets made", nonEmpty, undefined, { info: true }),
       check("Revenue growing every year", revUp, { value: span, source: "computed" }),
       check("Operating margin expanding", omUp, { value: om.length ? `${pct(om[0])} → ${pct(om[om.length - 1])}` : undefined, source: "computed" }),
       check("Free cash flow positive and rising", fcfOk, { value: fcf.length && fcf[0] !== null ? `${money(fcf[0])} → ${money(fcf[fcf.length - 1])}` : undefined, source: "computed" }),
-      check("More cash than debt, every year", cdOk, { value: `${cd.length} year-ends checked`, source: "computed" }),
+      check("More cash than debt (or debt easily carried), every year", cdOk, { value: `${cd.length} year-ends checked${carriedYears ? `; ${carriedYears} carried by that year's free cash flow` : ""}`, source: "computed" }),
     ];
     if (isSoftware) {
       checks.push(check("Net dollar retention 120% or higher", m.ndrPct === null ? null : m.ndrPct >= 120, { value: m.ndrPct === null ? "Not disclosed" : pct(m.ndrPct, 0), info: m.ndrPct === null, source: "computed" }));

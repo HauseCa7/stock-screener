@@ -45,7 +45,7 @@ export interface Metrics {
   currentRatio: number | null;
   debtToEquity: number | null; // total liabilities ÷ equity
   quarterlyFcf: { end: string; value: number }[];
-  quarterlyNetCash: { end: string; value: number }[];
+  quarterlyNetCash: { end: string; value: number; fcfLtm: number | null }[];
   annual: AnnualRow[];
   ruleOf40: number | null;
   shares: number | null;
@@ -127,9 +127,12 @@ export function computeMetrics(rows: FinRow[], market: Market | null): Metrics {
     .points_("cash_and_st_investments")
     .map((c) => {
       const d = debtPts.find((x) => Math.abs(toMs(x.end) - toMs(c.end)) <= 10 * 86_400_000);
-      return d ? { end: c.end, value: c.value - d.value } : null;
+      if (!d) return null;
+      // Free cash flow over the 12 months to that date, to judge whether net debt is carried.
+      const o = at("operating_cash_flow", c.end), k = at("capex", c.end);
+      return { end: c.end, value: c.value - d.value, fcfLtm: o !== null && k !== null ? o - k : null };
     })
-    .filter((x): x is { end: string; value: number } => x !== null)
+    .filter((x): x is { end: string; value: number; fcfLtm: number | null } => x !== null)
     .slice(-6);
 
   // Five-year history from annual figures.

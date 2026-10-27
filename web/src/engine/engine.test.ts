@@ -3,7 +3,7 @@ import { dcaPlan } from "./dca";
 import { enterpriseValue, impliedGrowth } from "./dcf";
 import { computeMetrics } from "./metrics";
 import { Series } from "./series";
-import { analyze, scorecard } from "./steps";
+import { analyze, debtCarried, scorecard } from "./steps";
 import type { AssessmentMap, FinRow, Market } from "./types";
 
 const flow = (metric: string, start: string, end: string, value: number): FinRow => ({ metric, period_start: start, period_end: end, value, origin: "ai" });
@@ -260,5 +260,22 @@ describe("debt line not shown on the balance sheet", () => {
   it("isn't invented when no balance sheet was read for that date", () => {
     const s = new Series([p("cash_and_st_investments", "2025-12-31", 50)]);
     expect(s.pointAt("total_debt", "2025-12-31")).toBeNull();
+  });
+});
+
+describe("debt the business can carry", () => {
+  it("passes net debt repaid within two years of FCF with interest covered 10x+", () => {
+    // AppLovin, mid-2026: $3.05B cash, $3.52B debt, $4.53B free cash flow, ~26x coverage
+    expect(debtCarried(3.05e9, 3.52e9, 4.53e9, 26).ok).toBe(true);
+    // March 2025: $3.16B net debt vs $2.53B trailing FCF = 1.25 years
+    expect(debtCarried(0, 3.16e9, 2.53e9, 26).ok).toBe(true);
+  });
+  it("fails when it would take more than two years of FCF, or interest cover is thin", () => {
+    expect(debtCarried(1e9, 10e9, 4e9, 26).ok).toBe(false);
+    expect(debtCarried(3e9, 3.5e9, 4.5e9, 6).ok).toBe(false);
+    expect(debtCarried(3e9, 3.5e9, -1e9, 26).ok).toBe(false);
+  });
+  it("still passes plain net cash", () => {
+    expect(debtCarried(5e9, 1e9, null, null).ok).toBe(true);
   });
 });
