@@ -247,3 +247,18 @@ describe("capex not shown separately", () => {
     expect(s.annual("capex")).toHaveLength(0);
   });
 });
+
+describe("debt line not shown on the balance sheet", () => {
+  const p = (metric: string, e: string, v: number): FinRow => ({ metric, period_start: e, period_end: e, value: v, origin: "ai" });
+  it("counts as 0 where the balance sheet was read, and keeps real figures", () => {
+    const s = new Series([p("total_liabilities", "2025-12-31", 100), p("total_liabilities", "2026-06-30", 120), p("total_debt", "2026-06-30", 2170), p("cash_and_st_investments", "2025-12-31", 50)]);
+    expect(s.pointAt("total_debt", "2025-12-31")).toBe(0);
+    expect(s.isAssumedPoint("total_debt", "2025-12-31")).toBe(true);
+    expect(s.pointAt("total_debt", "2026-06-30")).toBe(2170);
+    expect(s.isAssumedPoint("total_debt", "2026-06-30")).toBe(false);
+  });
+  it("isn't invented when no balance sheet was read for that date", () => {
+    const s = new Series([p("cash_and_st_investments", "2025-12-31", 50)]);
+    expect(s.pointAt("total_debt", "2025-12-31")).toBeNull();
+  });
+});

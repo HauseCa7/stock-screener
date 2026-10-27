@@ -65,7 +65,8 @@ export function buildMeasures(s: Series, view: TrendView): Measure[] {
     { id: "op_margin", title: "Operating margin", unit: "pct", better: "up", points: pts((x) => div(flowAt("operating_income", x), rev(x))) },
     { id: "fcf", title: "Free cash flow", unit: "money", better: "up", points: pts(fcf), note: fcfNote },
     { id: "fcf_margin", title: "Free cash flow margin", unit: "pct", better: "up", points: pts((x) => div(fcf(x), rev(x))) },
-    { id: "net_cash", title: "Cash minus debt", unit: "money", better: "up", points: pts(netCash), note: "At each period end" },
+    { id: "net_cash", title: "Cash minus debt", unit: "money", better: "up", points: pts(netCash),
+      note: `At each period end.${slots.some((x) => s.isAssumedPoint("total_debt", x.end)) ? " Where a balance sheet shows no borrowings line, debt is counted as 0." : ""}` },
   ];
 }
 

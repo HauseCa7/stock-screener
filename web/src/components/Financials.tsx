@@ -74,7 +74,7 @@ export function Financials({ companyId, rows, docs, onSaved }: { companyId: stri
     if (isPoint) {
       const row = byKey.get(`${metric}|${col.end}|${col.end}`);
       const v = s.pointAt(metric, col.end, 10);
-      return { metric, start: col.end, end: col.end, value: v, row };
+      return { metric, start: col.end, end: col.end, value: v, row, assumed: !row && s.isAssumedPoint(metric, col.end) };
     }
     if (col.ttm) {
       // Weighted-average share counts don't add up across quarters; show the latest quarter's instead.
@@ -113,7 +113,7 @@ export function Financials({ companyId, rows, docs, onSaved }: { companyId: stri
         const doc = cell.row?.source_doc_id ? docById.get(cell.row.source_doc_id) : undefined;
         const title = cell.computed
           ? (m === "diluted_shares" ? "Latest quarter's weighted-average diluted shares" : `Sum of the four quarters ending ${c.end}. Edit the quarters to change it.`)
-          : cell.assumed ? "The report has no separate capex line (it's inside 'other investing activities'), so it's counted as 0. Click to enter a figure."
+          : cell.assumed ? (m === "total_debt" ? "The balance sheet shows no borrowings line on this date, so debt is counted as 0. Click to enter a figure." : "The report has no separate capex line (it's inside 'other investing activities'), so it's counted as 0. Click to enter a figure.")
           : cell.row?.origin === "user" ? "Entered by you" : cell.derived ? "Derived from year-to-date figures" : doc ? `From ${doc.fiscal_label ?? doc.filename}${cell.row?.source_page ? `, page ${cell.row.source_page}` : ""}` : "";
         if (editing) {
           return (

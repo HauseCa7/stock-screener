@@ -51,6 +51,24 @@ export class Series {
       have.add(`${r.period_start}|${r.period_end}`);
     }
     if (capex.length) this.flows.set("capex", capex);
+
+    // Likewise for debt: many balance sheets only show a borrowings line when something is owed.
+    // Where the balance sheet was read (total liabilities is there) but no debt figure was found,
+    // count debt as 0, marked as assumed.
+    const debt = this.points.get("total_debt") ?? [];
+    const haveDebt = new Set(debt.map((r) => r.period_end));
+    for (const r of this.points.get("total_liabilities") ?? []) {
+      if (haveDebt.has(r.period_end)) continue;
+      debt.push({ metric: "total_debt", period_start: r.period_end, period_end: r.period_end, value: 0, origin: "ai", assumed: true });
+      haveDebt.add(r.period_end);
+    }
+    if (debt.length) this.points.set("total_debt", debt);
+  }
+
+  /** True when a balance-sheet value was filled in as 0 because the report shows no such line. */
+  isAssumedPoint(metric: string, end: string): boolean {
+    const rows = (this.points.get(metric) ?? []).filter((r) => near(r.period_end, end, 10));
+    return rows.length > 0 && rows.every((r) => r.assumed);
   }
 
   private flowRows(metric: string): FinRow[] {
@@ -162,10 +180,10 @@ export class Series {
 
   /** Point-in-time values (balance sheet), oldest first. */
   points_(metric: string): { end: string; value: number }[] {
-    const byEnd = new Map<string, { end: string; value: number; user: boolean }>();
+    const byEnd = new Map<string, { end: string; value: number; user: boolean; assumed?: boolean }>();
     for (const r of this.points.get(metric) ?? []) {
       const prev = byEnd.get(r.period_end);
-      if (!prev || (r.origin === "user" && !prev.user)) byEnd.set(r.period_end, { end: r.period_end, value: r.value!, user: r.origin === "user" });
+      if (!prev || (r.origin === "user" && !prev.user) || (prev.assumed && !r.assumed)) byEnd.set(r.period_end, { end: r.period_end, value: r.value!, user: r.origin === "user", assumed: r.assumed });
     }
     return [...byEnd.values()].sort((a, b) => toMs(a.end) - toMs(b.end)).map(({ end, value }) => ({ end, value }));
   }
