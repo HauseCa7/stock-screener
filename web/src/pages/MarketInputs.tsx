@@ -108,7 +108,7 @@ export default function MarketInputs() {
           <button aria-pressed={!showAll} onClick={() => setShowAll(false)}>Missing ({missing.length})</button>
           <button aria-pressed={showAll} onClick={() => setShowAll(true)}>All numbers</button>
         </div>
-        <span className="muted small">Numbers you enter are kept when market data is refreshed.</span>
+        <span className="muted small">Use these when a number can't be fetched. Refreshing market data later replaces them with fresh values where it can.</span>
       </div>
 
       {saved !== null && (

@@ -1,6 +1,7 @@
 // Market data for one company: Yahoo Finance first (no daily cap, includes short interest,
 // institutional ownership, forward P/E, PEG and EPS surprises), Alpha Vantage as a backup.
-// Values the user typed in are never overwritten.
+// Clicking Refresh replaces typed-in values with fresh ones; a typed value is kept only when
+// nothing could be fetched for that field.
 // POST { company_id }
 import { authenticate, handler, HttpError, json } from "./common.ts";
 
@@ -121,8 +122,10 @@ Deno.serve(handler(async (req) => {
   const patch: Record<string, unknown> = {};
   const warnings: string[] = [];
   const sources = new Set<string>();
+  const replaced: string[] = [];
   const set = (field: string, v: number | null, source: string) => {
-    if (v === null || origin[field] === "user" || field in patch) return;
+    if (v === null || field in patch) return;
+    if (origin[field] === "user") replaced.push(field);
     patch[field] = v;
     origin[field] = "api";
     sources.add(source);
@@ -154,6 +157,18 @@ Deno.serve(handler(async (req) => {
     yahooFailed = true;
     warnings.push(`Yahoo Finance: ${(e as Error).message}.`);
   }
+  // Yahoo's "shares outstanding" can count one share class only (Alphabet's Class A, about half
+  // the company), while its market cap covers every class. Market cap ÷ price gives the full count.
+  const p = num(patch.price), mc = num(patch.market_cap), sh = num(patch.shares_outstanding);
+  if (p && mc && p > 0) {
+    const implied = mc / p;
+    if (!sh || Math.abs(sh / implied - 1) > 0.05) {
+      patch.shares_outstanding = Math.round(implied);
+      origin.shares_outstanding = "api";
+      if (sh) warnings.push(`Shares outstanding set to ${(implied / 1e9).toFixed(2)}B (market cap ÷ price, all share classes); Yahoo's own figure of ${(sh / 1e9).toFixed(2)}B counts only one class.`);
+    }
+  }
+
   try {
     set("return_5y_pct", await y.fiveYear(yahooSymbol(symbol)), "Yahoo");
   } catch (e) {
@@ -170,7 +185,7 @@ Deno.serve(handler(async (req) => {
   set("spx_return_5y_pct", spx, "Yahoo");
 
   // ---- Alpha Vantage backup, only for what's still missing.
-  const want = (f: string) => !(f in patch) && origin[f] !== "user";
+  const want = (f: string) => !(f in patch);
   if (Deno.env.get("ALPHAVANTAGE_API_KEY") && ["price", "return_5y_pct", "spx_return_5y_pct", "earnings_misses_last4"].some(want)) {
     const s = avSymbol(symbol);
     const steps: [string, () => Promise<void>][] = [
@@ -193,11 +208,14 @@ Deno.serve(handler(async (req) => {
   }
 
   const missing = Object.keys(LABEL).filter((f) => want(f) && f !== "trailing_pe" && (existing as any)?.[f] == null);
+  if (replaced.length) warnings.push(`Replaced numbers you had typed in with fresh ones: ${replaced.map((f) => LABEL[f]).join(", ")}.`);
+  const kept = Object.keys(LABEL).filter((f) => origin[f] === "user" && !(f in patch));
+  if (kept.length) warnings.push(`Kept your typed ${kept.map((f) => LABEL[f]).join(", ")} (nothing fresh could be fetched).`);
   if (missing.length) warnings.push(`Not available automatically: ${missing.map((f) => LABEL[f]).join(", ")}. You can type these in.`);
   if (yahooFailed && !Object.keys(patch).length) warnings.push(/\.(TO|TRT|V)$/.test(symbol) ? "" : "For a non-US listing, set the market-data symbol (e.g. SHOP.TO).");
 
   const row = { company_id, ...patch, field_origin: origin, fetched_at: new Date().toISOString() };
   const { error } = await ctx.db.from("market_data").upsert(row, { onConflict: "company_id" });
   if (error) throw new Error(error.message);
-  return json({ ok: true, updated: Object.keys(patch), sources: [...sources], warnings: warnings.filter(Boolean) });
+  return json({ ok: true, updated: Object.keys(patch), replaced, sources: [...sources], warnings: warnings.filter(Boolean) });
 }));

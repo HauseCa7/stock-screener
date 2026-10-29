@@ -265,7 +265,7 @@ export function MarketPanel({ company, market, onChanged }: { company: Company; 
         <button className="btn" onClick={refresh} disabled={busy}>{busy ? "Fetching…" : "Refresh market data"}</button>
       </div>
       <p className="muted small" style={{ margin: 0 }}>
-        From Yahoo Finance, with Alpha Vantage as a backup. Numbers you type are kept on refresh. For Toronto listings set the symbol to e.g. SHOP.TO.
+        From Yahoo Finance, with Alpha Vantage as a backup. Refresh replaces numbers you typed with fresh ones; a typed number stays only if nothing can be fetched for it. For Toronto listings set the symbol to e.g. SHOP.TO.
         {market?.fetched_at && ` Last fetched ${new Date(market.fetched_at).toLocaleString()}.`}{" "}
         <a href={`https://seekingalpha.com/symbol/${company.ticker}`} target="_blank" rel="noreferrer">Seeking Alpha</a>
         {" · "}
