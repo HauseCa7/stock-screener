@@ -279,3 +279,17 @@ describe("debt the business can carry", () => {
     expect(debtCarried(5e9, 1e9, null, null).ok).toBe(true);
   });
 });
+
+describe("score by quarter", () => {
+  it("uses only figures reported up to each quarter end and reports what changed", async () => {
+    const { scoreByQuarter, changes } = await import("./history");
+    const market: Market = { price: 100, market_cap: 2000e9, shares_outstanding: 20e9, short_interest_pct: 1, institutional_pct: 70, return_5y_pct: 200, spx_return_5y_pct: 90, earnings_misses_last4: 0 };
+    const qs = scoreByQuarter(fixture(), market, {});
+    expect(qs.length).toBeGreaterThanOrEqual(2);
+    expect(qs.map((q) => q.end)).toEqual([...qs.map((q) => q.end)].sort());
+    const last = qs[qs.length - 1];
+    expect(last.end).toBe("2026-09-30");
+    // Every change reported is a real difference in points.
+    for (const c of changes(qs[qs.length - 2], last)) expect(c.from).not.toBe(c.to);
+  });
+});

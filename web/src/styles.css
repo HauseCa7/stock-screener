@@ -314,3 +314,23 @@ label.field > input, label.field > select { color: var(--ink); font-size: 15px; 
 /* TTM: the extra, calculated column after the fiscal years. */
 .fin col.ttm { background: var(--surface-2); }
 .trend .bar.ttm { opacity: 0.6; }
+
+/* ---------- score by quarter ---------- */
+.qs-summary { display: flex; gap: 14px; align-items: center; }
+.qs-big { font-size: 28px; font-weight: 600; min-width: 56px; text-align: center; padding: 6px 10px; border-radius: var(--r-md); background: var(--surface-2); }
+.qs-table td, .qs-table th { text-align: center; }
+.qs-table td:first-child, .qs-table th:first-child { text-align: left; }
+.qs-table .qs-total td { font-weight: 600; }
+.qs-table .qs-held td { color: var(--muted); }
+.qs-table td.qs-up { background: color-mix(in srgb, var(--pass) 16%, transparent); color: var(--ink); }
+.qs-table td.qs-down { background: var(--fail-soft); color: var(--ink); }
+.qs-bar { height: 4px; background: var(--surface-2); border-radius: 2px; margin-bottom: 4px; overflow: hidden; }
+.qs-bar span { display: block; height: 100%; background: var(--chart); }
+.qs-d { font-size: 12px; font-weight: 500; }
+.qs-d.up { color: var(--pass); }
+.qs-d.down { color: var(--fail); }
+.qs-table td:first-child, .qs-table th:first-child { position: sticky; left: 0; background: var(--surface); z-index: 1; }
+@media (max-width: 560px) {
+  .qs-table td:first-child, .qs-table th:first-child { max-width: 130px; white-space: normal; font-size: 13px; }
+  .qs-table .qs-held td:first-child .muted { display: none; }
+}

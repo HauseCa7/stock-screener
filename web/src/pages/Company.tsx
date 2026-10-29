@@ -4,6 +4,7 @@ import { MarketPanel, Reports } from "../components/Reports";
 import { DcaPanel } from "../components/DcaPanel";
 import { Financials } from "../components/Financials";
 import { ScoreTable } from "../components/Scorecard";
+import { ScoreHistory } from "../components/ScoreHistory";
 import { StepPanel } from "../components/StepPanel";
 import { Valuation } from "../components/Valuation";
 import { money, pct, perShare } from "../engine/format";
@@ -249,6 +250,7 @@ export default function CompanyPage() {
           <ScoreTable items={an.score.items} companyId={c.id} a={b.assessments} onSaved={reload} />
         </div>
       )}
+      {tab === "scorecard" && <div style={{ marginTop: 16 }}><ScoreHistory rows={b.financials} market={b.market} a={b.assessments} /></div>}
 
       {tab === "financials" && <Financials companyId={c.id} rows={b.financials} docs={b.docs} onSaved={reload} />}
 
