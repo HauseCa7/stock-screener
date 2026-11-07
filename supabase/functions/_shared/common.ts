@@ -15,8 +15,11 @@ export function json(body: unknown, status = 200): Response {
 }
 
 export class HttpError extends Error {
-  constructor(public status: number, message: string) {
+  /** Tokens already billed before the failure, so the run's cost is still recorded. */
+  usage?: Usage;
+  constructor(public status: number, message: string, usage?: Usage) {
     super(message);
+    this.usage = usage;
   }
 }
 
@@ -168,10 +171,13 @@ export async function callClaude(c: ClaudeCall): Promise<{ toolName: string; inp
     const body = await res.json().catch(() => ({}));
     if (!res.ok) {
       let msg = body?.error?.message ?? `HTTP ${res.status}`;
+      if (/credit balance/i.test(msg)) {
+        throw new HttpError(402, "Out of Anthropic API credits. Add credits at console.anthropic.com → Billing, then try again.", usage);
+      }
       if (/workspace/i.test(msg) && !workspace) {
         msg += " Fix: add a Supabase secret ANTHROPIC_WORKSPACE_ID, or use an API key created inside a workspace.";
       }
-      throw new HttpError(502, `Claude API error: ${msg}`);
+      throw new HttpError(502, `Claude API error: ${msg}`, usage);
     }
     const u = body.usage ?? {};
     usage.input_tokens += u.input_tokens ?? 0;
@@ -179,9 +185,9 @@ export async function callClaude(c: ClaudeCall): Promise<{ toolName: string; inp
     usage.cache_read_input_tokens! += u.cache_read_input_tokens ?? 0;
     usage.cache_creation_input_tokens! += u.cache_creation_input_tokens ?? 0;
     if (body.stop_reason === "max_tokens") {
-      throw new HttpError(502, "Claude's answer was cut off (too long). Try again or use fewer documents.");
+      throw new HttpError(502, "Claude's answer was cut off (too long). Try again or use fewer documents.", usage);
     }
-    if (body.stop_reason === "refusal") throw new HttpError(502, "Claude declined to answer this request.");
+    if (body.stop_reason === "refusal") throw new HttpError(502, "Claude declined to answer this request.", usage);
     const block = (body.content ?? []).find((b: any) => b.type === "tool_use" && b.name === c.toolName);
     const problem = block ? c.validate?.(block.input) ?? null : `Respond only by calling the ${c.toolName} tool.`;
     if (block && !problem) return { toolName: block.name, input: block.input, usage };
@@ -191,7 +197,7 @@ export async function callClaude(c: ClaudeCall): Promise<{ toolName: string; inp
     content = [...c.content, { type: "text", text: block ? `Your previous ${c.toolName} call was incomplete: ${problem} Call ${c.toolName} again with every field filled.` : problem! }];
   }
   if (c.acceptPartial && lastBlock) return { toolName: lastBlock.name, input: lastBlock.input, usage, problem: lastProblem };
-  throw new HttpError(502, `Claude's ${c.toolName} answer wasn't complete (${lastProblem}). Try again.`);
+  throw new HttpError(502, `Claude's ${c.toolName} answer wasn't complete (${lastProblem}). Try again.`, usage);
 }
 
 export async function logRun(

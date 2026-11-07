@@ -298,6 +298,17 @@ export async function listRuns(limit = 200): Promise<AiRun[]> {
   return (must(await supabase.from("ai_runs").select("*").order("created_at", { ascending: false }).limit(limit)) ?? []) as AiRun[];
 }
 
+/** Cost and date of every AI call ever made, for totals (the table shows only the latest). */
+export async function allRunCosts(): Promise<{ created_at: string; cost_usd: number | null; status: string; error: string | null }[]> {
+  const out: any[] = [];
+  for (let from = 0; ; from += 1000) {
+    const { data, error } = await supabase.from("ai_runs").select("created_at, cost_usd, status, error").order("created_at").range(from, from + 999);
+    if (error) throw new Error(error.message);
+    out.push(...(data ?? []));
+    if (!data || data.length < 1000) return out;
+  }
+}
+
 export async function saveSnapshot(companyId: string, snap: { total: number; band: string; steps_passed: number; breakdown: unknown }) {
   must(await supabase.from("score_history").insert({ company_id: companyId, ...snap }));
 }

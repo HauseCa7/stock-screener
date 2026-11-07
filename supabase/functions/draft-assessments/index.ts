@@ -375,7 +375,7 @@ Deno.serve(handler(async (req) => {
     await finishRun(ctx, runId, model, usage);
     return json({ ok: true, keys: rows.map((r) => r.key), skipped: skipped.map((k) => k.replace("__", ".")), usage });
   } catch (e) {
-    await finishRun(ctx, runId, model, usage, (e as Error).message);
+    await finishRun(ctx, runId, model, usage ?? (e as HttpError).usage ?? null, (e as Error).message);
     throw e;
   }
 }));

@@ -202,7 +202,7 @@ Deno.serve(handler(async (req) => {
   } catch (e) {
     const msg = (e as Error).message;
     await ctx.db.from("documents").update({ extract_status: "error", extract_error: msg }).eq("id", doc.id);
-    await finishRun(ctx, runId, model, usage, msg);
+    await finishRun(ctx, runId, model, usage ?? (e as HttpError).usage ?? null, msg);
     throw e;
   }
 }));
